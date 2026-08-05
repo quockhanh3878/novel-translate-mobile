@@ -12,7 +12,9 @@ pkg update -y && pkg install -y python git termux-api python-pillow python-lxml
 
 echo "== 2/5: Tai code =="
 if [ -d "$DEST/.git" ]; then
-    git -C "$DEST" pull
+    cd "$DEST"
+    git stash --include-untracked 2>/dev/null || true
+    git pull --ff-only || git reset --hard origin/main
 else
     git clone "$REPO_URL" "$DEST"
 fi
