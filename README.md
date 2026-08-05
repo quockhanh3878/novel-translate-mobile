@@ -85,3 +85,8 @@ Sau đó mở trình duyệt và truy cập: http://localhost:8000
 * deepseek_translate.py: Module gọi API DeepSeek và xử lý dịch thuật.
 * build_epub.py: Module đóng gói định dạng EPUB.
 * glossary.json: File lưu trữ từ điển riêng cho bộ truyện.
+
+## Contributors
+
+* [@quockhanh3878](https://github.com/quockhanh3878) (quockhanh3878Ber)
+* [@phiiggfdg](https://github.com/phiiggfdg) (Phi Trần tuấn luôn nè)
