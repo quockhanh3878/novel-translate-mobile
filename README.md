@@ -11,9 +11,11 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * 📖 **Đồng bộ Thuật ngữ (Smart Glossary)**: Tự động trích xuất và quản lý tên riêng, từ Hán Việt khó, danh từ riêng qua file `glossary.json`. Khi dịch, AI sẽ phát hiện các thuật ngữ mới và tự động cập nhật ngược lại vào từ điển để áp dụng cho các chương sau.
 * ✍️ **Đồng bộ Văn phong (Dynamic Style Guide)**: Tự động phân tích chương đầu tiên để học hỏi giọng văn, phong cách viết (kiếm hiệp, ngôn tình, đô thị...) và áp dụng vào System Prompt của toàn bộ truyện.
 * 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản (loại bỏ quảng cáo, rác HTML, thẻ thừa) và xuất ra file sách điện tử `.epub` có mục lục hoàn chỉnh để đọc trên điện thoại/máy đọc sách.
-* ⏯️ **Tự động tiếp tục (Resume)**: Khi bị gián đoạn (mất mạng, hết pin), chạy lại quy trình sẽ tự động nhận diện và bỏ qua các chương đã cào hoặc đã dịch thành công trước đó.
+* ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện có file thô/file dịch riêng theo tên truyện, nên khi bị gián đoạn (mất mạng, hết pin, bấm Dừng), chạy lại đúng truyện đó sẽ tự động bỏ qua các chương đã cào hoặc đã dịch thành công trước đó mà không lẫn sang truyện khác.
+* 📂 **Chọn file đã cào sẵn**: Ngoài nhập URL, có thể chọn thẳng 1 file `.txt` đã cào sẵn từ bộ nhớ máy (qua Web GUI) để dịch/đóng gói lại mà không cần cào lại từ đầu.
+* 🧪 **Dịch thử trước khi chạy**: Dịch nhanh 1 đoạn văn mẫu và xuất EPUB thử để kiểm tra API Key/chất lượng dịch trước khi chạy cả truyện.
 * 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm của DeepSeek (9:00 - 12:00 và 14:00 - 18:00 giờ Bắc Kinh, khi giá API tăng gấp đôi) để tạm dừng dịch và tự động tiếp tục khi hết giờ, hoặc tùy chọn bỏ qua kiểm tra này.
-* 🖥️ **Giao diện Web GUI & Widget 1-chạm**: Giao diện Responsive tuyệt đẹp (Glassmorphism dark mode) mượt mà trên cả trình duyệt điện thoại và PC. Hỗ trợ Widget Termux trên Android.
+* 🖥️ **Giao diện Web GUI & Widget 1-chạm**: Giao diện Responsive tuyệt đẹp (Glassmorphism dark mode) mượt mà trên cả trình duyệt điện thoại và PC, có nút Dừng đáng tin cậy và khung báo lỗi kèm nút copy để dễ dàng report/fix. Hỗ trợ Widget Termux trên Android.
 
 ---
 
@@ -110,17 +112,13 @@ python pipeline.py --start-url "https://example.com/chuong-1.html" --title "Tên
 ## ⚙️ Cấu hình nâng cao
 
 ### Cấu hình Glossary (Từ điển thuật ngữ)
-File `glossary.json` ở thư mục gốc giúp bạn định nghĩa trước các từ dịch cố định. Dưới đây là định dạng mẫu:
+File `glossary.json` ở thư mục gốc giúp bạn định nghĩa trước các từ dịch cố định. Đây là 1 object JSON phẳng dạng `"Trung": "Việt"` (không có nhóm `characters`/`terms` con), ví dụ:
 ```json
 {
-  "characters": {
-    "陆渊": "Lục Uyên",
-    "苏沐雨": "Tô Mộc Vũ"
-  },
-  "terms": {
-    "荒古圣体": "Hoang Cổ Thánh Thể",
-    "大帝": "Đại Đế"
-  }
+  "陆渊": "Lục Uyên",
+  "苏沐雨": "Tô Mộc Vũ",
+  "荒古圣体": "Hoang Cổ Thánh Thể",
+  "大帝": "Đại Đế"
 }
 ```
 *Hệ thống dịch thuật sẽ tự động nạp file này làm ngữ cảnh đầu vào và cập nhật thêm các nhân vật/thuật ngữ mới phát hiện được trong quá trình dịch.*
@@ -129,16 +127,16 @@ File `glossary.json` ở thư mục gốc giúp bạn định nghĩa trước c�
 
 ## 📂 Cấu trúc mã nguồn chính
 
-*   [web_gui.py](file:///f:/Clone/novel-translate-mobile/web_gui.py): File khởi chạy giao diện Web GUI.
-*   [pipeline.py](file:///f:/Clone/novel-translate-mobile/pipeline.py): Tập lệnh liên kết toàn bộ chuỗi xử lý (Cào -> Dịch -> Đóng gói).
-*   [crawler.py](file:///f:/Clone/novel-translate-mobile/crawler.py): Module chịu trách nhiệm tải văn bản từ trang web nguồn.
-*   [deepseek_translate.py](file:///f:/Clone/novel-translate-mobile/deepseek_translate.py): Module kết nối API DeepSeek, xử lý Glossary và Style Guide.
-*   [build_epub.py](file:///f:/Clone/novel-translate-mobile/build_epub.py): Module đóng gói thành phẩm thành định dạng sách điện tử EPUB.
-*   [text_postprocess.py](file:///f:/Clone/novel-translate-mobile/text_postprocess.py): Module hậu xử lý, chuẩn hóa chính tả và làm sạch văn bản tiếng Việt sau dịch.
-*   [setup_termux.sh](file:///f:/Clone/novel-translate-mobile/setup_termux.sh): Kịch bản tự động thiết lập ban đầu trên Termux.
-*   [run_termux.sh](file:///f:/Clone/novel-translate-mobile/run_termux.sh): Kịch bản bổ trợ khởi chạy nhanh / tích hợp Widget trên điện thoại Android.
+*   [web_gui.py](web_gui.py): File khởi chạy giao diện Web GUI (bao gồm chọn file đã cào sẵn, dịch thử, nút Dừng, báo lỗi copy được).
+*   [pipeline.py](pipeline.py): Tập lệnh liên kết toàn bộ chuỗi xử lý (Cào -> Dịch -> Đóng gói).
+*   [crawler.py](crawler.py): Module chịu trách nhiệm tải văn bản từ trang web nguồn.
+*   [deepseek_translate.py](deepseek_translate.py): Module kết nối API DeepSeek, xử lý Glossary và Style Guide.
+*   [build_epub.py](build_epub.py): Module đóng gói thành phẩm thành định dạng sách điện tử EPUB.
+*   [text_postprocess.py](text_postprocess.py): Module hậu xử lý, chuẩn hóa chính tả và làm sạch văn bản tiếng Việt sau dịch.
+*   [setup_termux.sh](setup_termux.sh): Kịch bản tự động thiết lập ban đầu trên Termux.
+*   [run_termux.sh](run_termux.sh): Kịch bản bổ trợ khởi chạy nhanh / tích hợp Widget trên điện thoại Android.
 
 ---
 
 ## 📄 Giấy phép
-Dự án được phân phối dưới giấy phép MIT License. Xem chi tiết tại file [LICENSE](file:///f:/Clone/novel-translate-mobile/LICENSE).
+Dự án được phân phối dưới giấy phép MIT License. Xem chi tiết tại file [LICENSE](LICENSE).

@@ -572,12 +572,12 @@ PAGE = """<!doctype html>
 
         <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); padding: 16px; border-radius: 12px; margin-bottom: 24px;">
             <label style="margin-top: 0;">DeepSeek API Key (sk-...):</label>
-            <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
-                <input type="password" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
+            <form onsubmit="return false;" style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
+                <input type="password" autocomplete="off" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
                 <button type="button" id="btn-save-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
                 <button type="button" id="btn-test-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
                 <button type="button" id="btn-test-translate" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
-            </div>
+            </form>
             <div style="display:flex; align-items:center; gap:8px; margin-top: 8px;">
                 <div id="key-status" style="font-size: 12px; color: var(--text-muted); flex:1;">Đang kiểm tra API Key...</div>
                 <button type="button" id="btn-copy-key-error" class="console-btn" style="display:none; flex:0 0 auto;">📋 Copy lỗi</button>
@@ -739,7 +739,7 @@ PAGE = """<!doctype html>
                 '',
                 'Chi tiết (log/traceback):',
                 lastStatus.error_detail || '(không có)'
-            ].join('\n');
+            ].join('\\n');
             copyWithFeedback(btnCopyError, report);
         };
 
@@ -878,7 +878,6 @@ PAGE = """<!doctype html>
         btnTestTranslate.onclick = () => {
             testModal.classList.add('active');
             testResult.className = 'modal-result';
-            testResult.style.display = 'none';
             btnCopyTestError.style.display = 'none';
         };
 
@@ -901,7 +900,6 @@ PAGE = """<!doctype html>
             btnRunTest.disabled = true;
             btnRunTest.textContent = "Đang dịch...";
             testResult.className = 'modal-result';
-            testResult.style.display = 'none';
 
             try {
                 const params = new URLSearchParams();
@@ -917,7 +915,7 @@ PAGE = """<!doctype html>
                 } else {
                     testResult.textContent = "✗ " + data.message;
                     testResult.className = 'modal-result error';
-                    lastTestError = data.message + (data.detail ? "\n\n" + data.detail : "");
+                    lastTestError = data.message + (data.detail ? "\\n\\n" + data.detail : "");
                     btnCopyTestError.style.display = 'inline-block';
                 }
             } catch (err) {
@@ -946,7 +944,6 @@ PAGE = """<!doctype html>
         
         f.onsubmit = async (e) => {
             e.preventDefault();
-            resultEl.style.display = 'none';
             resultEl.className = 'result-box';
             
             const formData = new FormData(f);
