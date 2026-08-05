@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import urllib.parse
+import requests
 
 from crawler import guess_title
 from deepseek_translate import load_dotenv
@@ -41,6 +42,31 @@ def save_api_key(key):
         
     # Cap nhat vao os.environ de script dang chay nhan duoc luon
     os.environ["DEEPSEEK_API_KEY"] = key
+
+
+def test_deepseek_key(key):
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 5
+    }
+    try:
+        resp = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=payload, timeout=15)
+        if resp.status_code == 200:
+            return True, "Key hợp lệ! Kết nối thành công tới DeepSeek API."
+        else:
+            try:
+                data = resp.json()
+                err_msg = data.get("error", {}).get("message", resp.text)
+            except Exception:
+                err_msg = resp.text
+            return False, f"Lỗi (Mã {resp.status_code}): {err_msg[:100]}"
+    except Exception as e:
+        return False, f"Lỗi kết nối: {str(e)[:100]}"
 
 
 # Trạng thái toàn cục để web cap nhat realtime
@@ -413,7 +439,8 @@ PAGE = """<!doctype html>
             <label style="margin-top: 0;">DeepSeek API Key (sk-...):</label>
             <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
                 <input type="password" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
-                <button type="button" id="btn-save-key" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
+                <button type="button" id="btn-save-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
+                <button type="button" id="btn-test-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
             </div>
             <div id="key-status" style="font-size: 12px; margin-top: 8px; color: var(--text-muted);">Đang kiểm tra API Key...</div>
         </div>
@@ -530,8 +557,42 @@ PAGE = """<!doctype html>
         
         const apiKeyInput = document.getElementById('api_key_input');
         const btnSaveKey = document.getElementById('btn-save-key');
+        const btnTestKey = document.getElementById('btn-test-key');
         const keyStatus = document.getElementById('key-status');
         const keyWarning = document.getElementById('key-warning');
+
+        btnTestKey.onclick = async () => {
+            const key = apiKeyInput.value.trim();
+            if (!key) {
+                alert("Vui lòng nhập API Key trước khi test.");
+                return;
+            }
+            btnTestKey.disabled = true;
+            btnTestKey.textContent = "Đang test...";
+            keyStatus.textContent = "Đang kết nối tới DeepSeek API để kiểm tra...";
+            keyStatus.style.color = "var(--text-muted)";
+            
+            try {
+                const params = new URLSearchParams();
+                params.append("key", key);
+                const r = await fetch('/test_key', { method: 'POST', body: params });
+                const data = await r.json();
+                if (data.success) {
+                    keyStatus.textContent = "✓ " + data.message;
+                    keyStatus.style.color = "var(--accent-green)";
+                } else {
+                    keyStatus.textContent = "✗ " + data.message;
+                    keyStatus.style.color = "var(--accent-red)";
+                }
+            } catch (err) {
+                console.error(err);
+                keyStatus.textContent = "✗ Lỗi kết nối khi kiểm tra Key.";
+                keyStatus.style.color = "var(--accent-red)";
+            } finally {
+                btnTestKey.disabled = false;
+                btnTestKey.textContent = "Test Key";
+            }
+        };
 
         btnSaveKey.onclick = async () => {
             const key = apiKeyInput.value.trim();
@@ -878,6 +939,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"success": True}).encode())
+            return
+
+        if self.path == "/test_key":
+            length = int(self.headers.get("Content-Length", 0))
+            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            key = params.get("key", [""])[0].strip()
+            success, msg = test_deepseek_key(key)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": success, "message": msg}).encode())
             return
 
         length = int(self.headers.get("Content-Length", 0))
