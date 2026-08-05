@@ -11,10 +11,15 @@ import shutil
 import subprocess
 import threading
 import urllib.parse
+import tempfile
+
 import requests
 
+from build_epub import build_epub
 from crawler import guess_title
-from deepseek_translate import load_dotenv
+from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
+                                call_deepseek, load_glossary)
+from text_postprocess import postprocess
 
 # Load env variables on startup
 load_dotenv()
@@ -69,6 +74,45 @@ def test_deepseek_key(key):
         return False, f"Lỗi kết nối: {str(e)[:100]}"
 
 
+def test_translate_handler(chinese_text: str, api_key: str) -> dict:
+    """Dich doan van Trung -> Viet va xuat EPUB de kiem tra toan bo pipeline."""
+    global TEST_EPUB_PATH
+    try:
+        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block="")
+        chapter = {"title": "Chuong thu nhat", "paragraphs": [chinese_text]}
+        glossary = load_glossary("glossary.json")
+        translated = translate_chapter(chapter, glossary, system_prompt, api_key,
+                                       model="deepseek-v4-flash", temperature=1.3,
+                                       thinking=True)
+
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False,
+                                          encoding="utf-8")
+        try:
+            tmp.write(f"=== {translated['title']} ===\n\n")
+            for p in translated["paragraphs"]:
+                tmp.write(f"{p}\n\n")
+            tmp.write("=" * 40 + "\n")
+            tmp.close()
+
+            if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
+                os.remove(TEST_EPUB_PATH)
+
+            epub_file = "test_dung_thu.epub"
+            build_epub(tmp.name, epub_file, "Truyen dung thu", "DeepSeek API")
+            TEST_EPUB_PATH = os.path.abspath(epub_file)
+
+            return {
+                "success": True,
+                "translated_text": "\n".join(translated["paragraphs"]),
+                "epub_file": epub_file,
+            }
+        finally:
+            os.unlink(tmp.name)
+
+    except Exception as e:
+        return {"success": False, "message": f"Loi dich thu: {str(e)[:200]}"}
+
+
 # Trạng thái toàn cục để web cap nhat realtime
 STATE = {
     "running": False,
@@ -81,6 +125,7 @@ STATE = {
 }
 LOCK = threading.Lock()
 CURRENT_PROC = None
+TEST_EPUB_PATH = None  # duong dan file EPUB dung thu vua tao
 
 PAGE = """<!doctype html>
 <html>
@@ -424,6 +469,90 @@ PAGE = """<!doctype html>
             border: 1px solid rgba(255, 255, 255, 0.05);
             line-height: 1.6;
         }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-box {
+            background: #161c2d;
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 28px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 85vh;
+            overflow-y: auto;
+        }
+        .modal-box h3 {
+            margin-top: 0;
+            font-size: 18px;
+            color: var(--accent-cyan);
+        }
+        .modal-box textarea {
+            width: 100%;
+            min-height: 100px;
+            background: rgba(10, 12, 22, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            padding: 10px;
+            resize: vertical;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .modal-box textarea:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+        }
+        .modal-btn-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .modal-btn {
+            flex: 1;
+            padding: 10px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .modal-btn.primary { background: var(--btn-start-grad); color: #fff; }
+        .modal-btn.secondary { background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid var(--glass-border); }
+        .modal-result {
+            margin-top: 14px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            display: none;
+            line-height: 1.6;
+            word-break: break-word;
+        }
+        .modal-result.success {
+            display: block;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            color: #34d399;
+        }
+        .modal-result.error {
+            display: block;
+            background: rgba(244, 63, 94, 0.1);
+            border: 1px solid rgba(244, 63, 94, 0.2);
+            color: #f87171;
+        }
+        .modal-result a {
+            color: var(--accent-cyan);
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -441,6 +570,7 @@ PAGE = """<!doctype html>
                 <input type="password" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
                 <button type="button" id="btn-save-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
                 <button type="button" id="btn-test-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
+                <button type="button" id="btn-test-translate" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
             </div>
             <div id="key-status" style="font-size: 12px; margin-top: 8px; color: var(--text-muted);">Đang kiểm tra API Key...</div>
         </div>
@@ -537,6 +667,19 @@ PAGE = """<!doctype html>
             </div>
         </div>
         <pre id="log"></pre>
+    </div>
+    
+    <div class="modal-overlay" id="test-modal">
+        <div class="modal-box">
+            <h3>Dịch thử đoạn văn</h3>
+            <p style="font-size:13px; color:var(--text-muted); margin-top:0;">Nhập đoạn văn Trung Quốc ngắn, hệ thống sẽ dịch sang Việt và xuất file EPUB để kiểm tra.</p>
+            <textarea id="test-text" placeholder="Nhập văn bản tiếng Trung...">叶秋坐在电脑前，看着屏幕上闪烁的光标，手指轻轻敲击着键盘。窗外的阳光透过窗帘的缝隙洒进来，在地板上画出一道金色的光线。他深吸一口气，开始敲下第一行字。</textarea>
+            <div class="modal-btn-row">
+                <button class="modal-btn primary" id="btn-run-test">Dịch &amp; tạo EPUB</button>
+                <button class="modal-btn secondary" id="btn-close-modal">Đóng</button>
+            </div>
+            <div class="modal-result" id="test-result"></div>
+        </div>
     </div>
     
     <script>
@@ -644,6 +787,61 @@ PAGE = """<!doctype html>
         }
         checkKey();
         
+        const testModal = document.getElementById('test-modal');
+        const btnTestTranslate = document.getElementById('btn-test-translate');
+        const btnRunTest = document.getElementById('btn-run-test');
+        const btnCloseModal = document.getElementById('btn-close-modal');
+        const testText = document.getElementById('test-text');
+        const testResult = document.getElementById('test-result');
+
+        btnTestTranslate.onclick = () => {
+            testModal.classList.add('active');
+            testResult.className = 'modal-result';
+            testResult.style.display = 'none';
+        };
+
+        btnCloseModal.onclick = () => {
+            testModal.classList.remove('active');
+        };
+
+        testModal.onclick = (e) => {
+            if (e.target === testModal) testModal.classList.remove('active');
+        };
+
+        btnRunTest.onclick = async () => {
+            const text = testText.value.trim();
+            if (!text) {
+                alert("Vui lòng nhập đoạn văn bản tiếng Trung.");
+                return;
+            }
+            btnRunTest.disabled = true;
+            btnRunTest.textContent = "Đang dịch...";
+            testResult.className = 'modal-result';
+            testResult.style.display = 'none';
+
+            try {
+                const params = new URLSearchParams();
+                params.append("text", text);
+                const r = await fetch('/test_translate', { method: 'POST', body: params });
+                const data = await r.json();
+                if (data.success) {
+                    testResult.innerHTML = "✓ <strong>Dịch thành công!</strong><br><br>"
+                        + "<em>" + data.translated_text.substring(0, 300) + (data.translated_text.length > 300 ? "..." : "") + "</em><br><br>"
+                        + '<a href="/download_test" download>📥 Tải file EPUB</a>';
+                    testResult.className = 'modal-result success';
+                } else {
+                    testResult.textContent = "✗ " + data.message;
+                    testResult.className = 'modal-result error';
+                }
+            } catch (err) {
+                testResult.textContent = "✗ Lỗi kết nối: " + err.message;
+                testResult.className = 'modal-result error';
+            } finally {
+                btnRunTest.disabled = false;
+                btnRunTest.textContent = "Dịch & tạo EPUB";
+            }
+        };
+
         btnScroll.onclick = () => {
             autoScroll = !autoScroll;
             btnScroll.textContent = 'Auto Scroll: ' + (autoScroll ? 'ON' : 'OFF');
@@ -909,6 +1107,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(body)
+        elif self.path == "/download_test":
+            if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
+                with open(TEST_EPUB_PATH, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/epub+zip")
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="test_dung_thu.epub"')
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Chua co file EPUB dung thu"}).encode())
         else:
             body = PAGE.encode()
             self.send_response(200)
@@ -950,6 +1164,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"success": success, "message": msg}).encode())
+            return
+
+        if self.path == "/test_translate":
+            length = int(self.headers.get("Content-Length", 0))
+            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            chinese_text = params.get("text", [""])[0].strip()
+            api_key = os.environ.get("DEEPSEEK_API_KEY", "")
+            if not api_key:
+                result = {"success": False, "message": "Chua co API Key. Vui long luu Key truoc."}
+            elif not chinese_text:
+                result = {"success": False, "message": "Vui long nhap doan van Trung."}
+            else:
+                result = test_translate_handler(chinese_text, api_key)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
             return
 
         length = int(self.headers.get("Content-Length", 0))
