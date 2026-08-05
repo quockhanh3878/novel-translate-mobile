@@ -13,35 +13,6 @@ import threading
 import urllib.parse
 
 from crawler import guess_title
-from deepseek_translate import load_dotenv
-
-# Load env variables on startup
-load_dotenv()
-
-def save_api_key(key):
-    key = key.strip()
-    if not key:
-        return
-    # Ghi hoac cap nhat file .env
-    env_lines = []
-    has_key = False
-    if os.path.exists(".env"):
-        with open(".env", "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("DEEPSEEK_API_KEY="):
-                    env_lines.append(f"DEEPSEEK_API_KEY={key}\n")
-                    has_key = True
-                else:
-                    env_lines.append(line)
-    if not has_key:
-        env_lines.append(f"DEEPSEEK_API_KEY={key}\n")
-        
-    with open(".env", "w", encoding="utf-8") as f:
-        f.writelines(env_lines)
-        
-    # Cap nhat vao os.environ de script dang chay nhan duoc luon
-    os.environ["DEEPSEEK_API_KEY"] = key
-
 
 # Trạng thái toàn cục để web cap nhat realtime
 STATE = {
@@ -405,19 +376,6 @@ PAGE = """<!doctype html>
         <h2>DỊCH TRUYỆN NOVEL</h2>
         <div class="subtitle">Hệ thống dịch thuật tự động sử dụng DeepSeek API</div>
         
-        <div id="key-warning" class="result-box error" style="display: none; margin-top: 0; margin-bottom: 20px; font-weight: normal; text-align: left;">
-            ⚠️ <strong>Thiếu DEEPSEEK_API_KEY:</strong> Vui lòng nhập API Key xuống ô bên dưới và nhấn <strong>Lưu Key</strong> để bắt đầu sử dụng dịch thuật DeepSeek.
-        </div>
-
-        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); padding: 16px; border-radius: 12px; margin-bottom: 24px;">
-            <label style="margin-top: 0;">DeepSeek API Key (sk-...):</label>
-            <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
-                <input type="password" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
-                <button type="button" id="btn-save-key" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
-            </div>
-            <div id="key-status" style="font-size: 12px; margin-top: 8px; color: var(--text-muted);">Đang kiểm tra API Key...</div>
-        </div>
-        
         <form id="f">
             <label>Nguồn truyện:</label>
             <input name="input" placeholder="URL chương 1 (ví dụ: ..._1.html) hoặc đường dẫn file .txt thô" required>
@@ -527,61 +485,6 @@ PAGE = """<!doctype html>
         
         let autoScroll = true;
         let pollTimeout = null;
-        
-        const apiKeyInput = document.getElementById('api_key_input');
-        const btnSaveKey = document.getElementById('btn-save-key');
-        const keyStatus = document.getElementById('key-status');
-        const keyWarning = document.getElementById('key-warning');
-
-        btnSaveKey.onclick = async () => {
-            const key = apiKeyInput.value.trim();
-            if (!key) {
-                alert("Vui lòng nhập API Key.");
-                return;
-            }
-            btnSaveKey.disabled = true;
-            btnSaveKey.textContent = "Đang lưu...";
-            try {
-                const params = new URLSearchParams();
-                params.append("key", key);
-                const r = await fetch('/save_key', { method: 'POST', body: params });
-                if (r.ok) {
-                    keyStatus.textContent = "✓ Đã lưu API Key thành công!";
-                    keyStatus.style.color = "var(--accent-green)";
-                    keyWarning.style.display = "none";
-                } else {
-                    keyStatus.textContent = "✗ Không thể lưu API Key.";
-                    keyStatus.style.color = "var(--accent-red)";
-                }
-            } catch (err) {
-                console.error(err);
-                keyStatus.textContent = "✗ Lỗi kết nối khi lưu.";
-                keyStatus.style.color = "var(--accent-red)";
-            } finally {
-                btnSaveKey.disabled = false;
-                btnSaveKey.textContent = "Lưu Key";
-            }
-        };
-
-        async function checkKey() {
-            try {
-                const r = await fetch('/get_key');
-                const data = await r.json();
-                if (data.key) {
-                    apiKeyInput.value = data.key;
-                    keyStatus.textContent = "✓ Đã nạp API Key từ hệ thống.";
-                    keyStatus.style.color = "var(--accent-green)";
-                    keyWarning.style.display = "none";
-                } else {
-                    keyStatus.textContent = "✗ Chưa cấu hình API Key (chưa có trong .env)";
-                    keyStatus.style.color = "var(--accent-red)";
-                    keyWarning.style.display = "block";
-                }
-            } catch (err) {
-                console.error("Check key error:", err);
-            }
-        }
-        checkKey();
         
         btnScroll.onclick = () => {
             autoScroll = !autoScroll;
@@ -841,13 +744,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(body)
-        elif self.path == "/get_key":
-            key = os.environ.get("DEEPSEEK_API_KEY", "")
-            body = json.dumps({"key": key}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
         else:
             body = PAGE.encode()
             self.send_response(200)
@@ -867,17 +763,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         pass
             self.send_response(204)
             self.end_headers()
-            return
-
-        if self.path == "/save_key":
-            length = int(self.headers.get("Content-Length", 0))
-            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
-            key = params.get("key", [""])[0].strip()
-            save_api_key(key)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": True}).encode())
             return
 
         length = int(self.headers.get("Content-Length", 0))

@@ -59,28 +59,9 @@ Vietnamese
 Đạo hữu, xin hãy dừng bước.
 ```
 
-## Hướng dẫn cài đặt & Cập nhật trên Termux (Android)
+## Download
 
-### Cài đặt mới (Chạy 1 dòng duy nhất)
-Mở Termux và sao chép/dán lệnh sau để cài đặt tự động:
-```bash
-curl -sOL https://raw.githubusercontent.com/quockhanh3878/novel-translate-mobile/main/setup_termux.sh && bash setup_termux.sh
-```
-
-### Cập nhật bản mới (Dành cho máy đã cài bản cũ)
-Nếu bạn đã cài đặt bản cũ (mặc định trong thư mục `~/novel`), hãy chạy lệnh sau để cập nhật code mới nhất và các thư viện cần thiết:
-```bash
-cd ~/novel && git pull && pip install -r requirements.txt
-```
-> [!IMPORTANT]
-> Sau khi chạy lệnh cập nhật xong, hãy **tắt hoàn toàn Termux** (chọn `Exit` từ thông báo Termux trên màn hình vuốt xuống hoặc gõ lệnh `exit`) rồi mở lại Termux để kích hoạt Web GUI chạy bản mới nhất.
-
-### Khởi chạy thủ công
-Thông thường ứng dụng sẽ tự động chạy khi mở Termux. Nếu muốn chạy thủ công, sử dụng lệnh:
-```bash
-cd ~/novel && python web_gui.py
-```
-Sau đó mở trình duyệt điện thoại truy cập: `http://localhost:8000`
+Download the model from the latest GitHub Release.
 
 ## License
 
