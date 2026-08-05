@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import threading
+import traceback
 import urllib.parse
 import tempfile
 
@@ -18,7 +19,7 @@ import requests
 from build_epub import build_epub
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
-                                call_deepseek, load_glossary)
+                                call_deepseek, load_glossary, translate_chapter)
 from text_postprocess import postprocess
 
 # Load env variables on startup
@@ -69,9 +70,9 @@ def test_deepseek_key(key):
                 err_msg = data.get("error", {}).get("message", resp.text)
             except Exception:
                 err_msg = resp.text
-            return False, f"Lỗi (Mã {resp.status_code}): {err_msg[:100]}"
+            return False, f"Lỗi (Mã {resp.status_code}): {err_msg[:500]}"
     except Exception as e:
-        return False, f"Lỗi kết nối: {str(e)[:100]}"
+        return False, f"Lỗi kết nối: {e}"
 
 
 def test_translate_handler(chinese_text: str, api_key: str) -> dict:
@@ -110,7 +111,7 @@ def test_translate_handler(chinese_text: str, api_key: str) -> dict:
             os.unlink(tmp.name)
 
     except Exception as e:
-        return {"success": False, "message": f"Loi dich thu: {str(e)[:200]}"}
+        return {"success": False, "message": f"Loi dich thu: {e}", "detail": traceback.format_exc()}
 
 
 # Trạng thái toàn cục để web cap nhat realtime
@@ -121,11 +122,16 @@ STATE = {
     "error": None,
     "step": "idle",          # "idle", "crawling", "translating", "packaging", "done"
     "current_chapter": 0,
-    "total_chapters": 0
+    "total_chapters": 0,
+    "stop_requested": False,  # dat truoc khi CURRENT_PROC ton tai van phai duoc ton trong
+    "error_detail": "",       # traceback/duoi log day du de nguoi dung copy di fix
+    "raw_file": "",           # file tho dang dung cho lan chay hien tai (de ro rang)
+    "translated_file": ""
 }
 LOCK = threading.Lock()
 CURRENT_PROC = None
 TEST_EPUB_PATH = None  # duong dan file EPUB dung thu vua tao
+UPLOAD_DIR = "uploads"  # noi luu file da cao nguoi dung chon tu may
 
 PAGE = """<!doctype html>
 <html>
@@ -572,13 +578,21 @@ PAGE = """<!doctype html>
                 <button type="button" id="btn-test-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
                 <button type="button" id="btn-test-translate" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
             </div>
-            <div id="key-status" style="font-size: 12px; margin-top: 8px; color: var(--text-muted);">Đang kiểm tra API Key...</div>
+            <div style="display:flex; align-items:center; gap:8px; margin-top: 8px;">
+                <div id="key-status" style="font-size: 12px; color: var(--text-muted); flex:1;">Đang kiểm tra API Key...</div>
+                <button type="button" id="btn-copy-key-error" class="console-btn" style="display:none; flex:0 0 auto;">📋 Copy lỗi</button>
+            </div>
         </div>
         
         <form id="f">
             <label>Nguồn truyện:</label>
-            <input name="input" placeholder="URL chương 1 (ví dụ: ..._1.html) hoặc đường dẫn file .txt thô" required>
-            
+            <input name="input" id="input_source" placeholder="URL chương 1 (ví dụ: ..._1.html) hoặc đường dẫn file .txt thô" required>
+            <div style="display:flex; align-items:center; gap:10px; margin: -10px 0 16px 0;">
+                <label for="raw_file_input" style="margin:0; flex:0 0 auto; font-weight:500; font-size:13px; color:var(--text-muted); cursor:pointer; text-decoration:underline;">📂 Hoặc chọn file đã cào sẵn từ máy...</label>
+                <input type="file" id="raw_file_input" accept=".txt,text/plain" style="display:none;">
+            </div>
+            <div id="raw_file_status" style="font-size:12px; margin: -12px 0 16px 0; color: var(--text-muted); display:none;"></div>
+
             <label>Tên truyện (để trống sẽ tự đoán từ URL):</label>
             <input name="title" placeholder="Ví dụ: Đệ Tam Trùng Nhân Cách">
             
@@ -655,10 +669,19 @@ PAGE = """<!doctype html>
             <div class="progress-bar-bg">
                 <div class="progress-bar" id="progress-bar"></div>
             </div>
+            <div id="file-info" style="font-size:11px; color:var(--text-muted); margin-top:8px; font-family:'Fira Code', monospace; word-break:break-all;"></div>
         </div>
-        
+
         <div class="result-box" id="result"></div>
-        
+
+        <div class="error-report" id="error-report" style="display:none; margin-top:12px; padding:14px; border-radius:10px; background:rgba(244,63,94,0.06); border:1px solid rgba(244,63,94,0.25);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:12px; font-weight:700; color:var(--accent-red);">CHI TIẾT LỖI</span>
+                <button class="console-btn" id="btn-copy-error">📋 Copy báo cáo lỗi</button>
+            </div>
+            <pre id="error-detail-text" style="max-height:180px; color:#fca5a5;"></pre>
+        </div>
+
         <div class="console-header">
             <span>CONSOLE LOGS</span>
             <div class="console-controls">
@@ -679,6 +702,7 @@ PAGE = """<!doctype html>
                 <button class="modal-btn secondary" id="btn-close-modal">Đóng</button>
             </div>
             <div class="modal-result" id="test-result"></div>
+            <button class="console-btn" id="btn-copy-test-error" style="display:none; margin-top:10px;">📋 Copy lỗi để fix</button>
         </div>
     </div>
     
@@ -694,7 +718,31 @@ PAGE = """<!doctype html>
         const progressPercent = document.getElementById('progress-percent');
         const btnScroll = document.getElementById('btn-scroll');
         const btnCopy = document.getElementById('btn-copy');
-        
+        const fileInfo = document.getElementById('file-info');
+        const errorReport = document.getElementById('error-report');
+        const errorDetailText = document.getElementById('error-detail-text');
+        const btnCopyError = document.getElementById('btn-copy-error');
+        let lastStatus = {};
+
+        function copyWithFeedback(btn, text) {
+            navigator.clipboard.writeText(text);
+            const original = btn.textContent;
+            btn.textContent = 'Đã copy!';
+            setTimeout(() => btn.textContent = original, 1500);
+        }
+
+        btnCopyError.onclick = () => {
+            const report = [
+                `Bước lỗi: ${lastStatus.step || '(không rõ)'}`,
+                `Lỗi: ${lastStatus.error || '(không rõ)'}`,
+                `File thô: ${lastStatus.raw_file || '(không có)'}`,
+                '',
+                'Chi tiết (log/traceback):',
+                lastStatus.error_detail || '(không có)'
+            ].join('\n');
+            copyWithFeedback(btnCopyError, report);
+        };
+
         let autoScroll = true;
         let pollTimeout = null;
         
@@ -703,6 +751,17 @@ PAGE = """<!doctype html>
         const btnTestKey = document.getElementById('btn-test-key');
         const keyStatus = document.getElementById('key-status');
         const keyWarning = document.getElementById('key-warning');
+        const btnCopyKeyError = document.getElementById('btn-copy-key-error');
+        let lastKeyError = '';
+
+        function setKeyStatus(ok, message) {
+            keyStatus.textContent = (ok ? "✓ " : "✗ ") + message;
+            keyStatus.style.color = ok ? "var(--accent-green)" : "var(--accent-red)";
+            lastKeyError = ok ? '' : message;
+            btnCopyKeyError.style.display = ok ? 'none' : 'inline-block';
+        }
+
+        btnCopyKeyError.onclick = () => copyWithFeedback(btnCopyKeyError, lastKeyError);
 
         btnTestKey.onclick = async () => {
             const key = apiKeyInput.value.trim();
@@ -712,25 +771,18 @@ PAGE = """<!doctype html>
             }
             btnTestKey.disabled = true;
             btnTestKey.textContent = "Đang test...";
-            keyStatus.textContent = "Đang kết nối tới DeepSeek API để kiểm tra...";
+            setKeyStatus(true, "Đang kết nối tới DeepSeek API để kiểm tra...");
             keyStatus.style.color = "var(--text-muted)";
-            
+
             try {
                 const params = new URLSearchParams();
                 params.append("key", key);
                 const r = await fetch('/test_key', { method: 'POST', body: params });
                 const data = await r.json();
-                if (data.success) {
-                    keyStatus.textContent = "✓ " + data.message;
-                    keyStatus.style.color = "var(--accent-green)";
-                } else {
-                    keyStatus.textContent = "✗ " + data.message;
-                    keyStatus.style.color = "var(--accent-red)";
-                }
+                setKeyStatus(data.success, data.message);
             } catch (err) {
                 console.error(err);
-                keyStatus.textContent = "✗ Lỗi kết nối khi kiểm tra Key.";
-                keyStatus.style.color = "var(--accent-red)";
+                setKeyStatus(false, "Lỗi kết nối khi kiểm tra Key: " + err.message);
             } finally {
                 btnTestKey.disabled = false;
                 btnTestKey.textContent = "Test Key";
@@ -750,17 +802,14 @@ PAGE = """<!doctype html>
                 params.append("key", key);
                 const r = await fetch('/save_key', { method: 'POST', body: params });
                 if (r.ok) {
-                    keyStatus.textContent = "✓ Đã lưu API Key thành công!";
-                    keyStatus.style.color = "var(--accent-green)";
+                    setKeyStatus(true, "Đã lưu API Key thành công!");
                     keyWarning.style.display = "none";
                 } else {
-                    keyStatus.textContent = "✗ Không thể lưu API Key.";
-                    keyStatus.style.color = "var(--accent-red)";
+                    setKeyStatus(false, "Không thể lưu API Key.");
                 }
             } catch (err) {
                 console.error(err);
-                keyStatus.textContent = "✗ Lỗi kết nối khi lưu.";
-                keyStatus.style.color = "var(--accent-red)";
+                setKeyStatus(false, "Lỗi kết nối khi lưu: " + err.message);
             } finally {
                 btnSaveKey.disabled = false;
                 btnSaveKey.textContent = "Lưu Key";
@@ -786,19 +835,54 @@ PAGE = """<!doctype html>
             }
         }
         checkKey();
-        
+
+        const rawFileInput = document.getElementById('raw_file_input');
+        const rawFileStatus = document.getElementById('raw_file_status');
+        const inputSource = document.getElementById('input_source');
+
+        rawFileInput.onchange = async () => {
+            const file = rawFileInput.files[0];
+            if (!file) return;
+            rawFileStatus.style.display = 'block';
+            rawFileStatus.textContent = 'Đang tải file lên...';
+            rawFileStatus.style.color = 'var(--text-muted)';
+            try {
+                const text = await file.text();
+                const r = await fetch('/upload_raw?name=' + encodeURIComponent(file.name), {
+                    method: 'POST', body: text
+                });
+                const data = await r.json();
+                if (data.success) {
+                    inputSource.value = data.path;
+                    rawFileStatus.textContent = '✓ Đã chọn file: ' + data.path;
+                    rawFileStatus.style.color = 'var(--accent-green)';
+                } else {
+                    rawFileStatus.textContent = '✗ ' + (data.message || 'Lỗi tải file.');
+                    rawFileStatus.style.color = 'var(--accent-red)';
+                }
+            } catch (err) {
+                rawFileStatus.textContent = '✗ Lỗi tải file: ' + err.message;
+                rawFileStatus.style.color = 'var(--accent-red)';
+            }
+        };
+
         const testModal = document.getElementById('test-modal');
         const btnTestTranslate = document.getElementById('btn-test-translate');
         const btnRunTest = document.getElementById('btn-run-test');
         const btnCloseModal = document.getElementById('btn-close-modal');
         const testText = document.getElementById('test-text');
         const testResult = document.getElementById('test-result');
+        const btnCopyTestError = document.getElementById('btn-copy-test-error');
+        let lastTestError = '';
 
         btnTestTranslate.onclick = () => {
             testModal.classList.add('active');
             testResult.className = 'modal-result';
             testResult.style.display = 'none';
+            btnCopyTestError.style.display = 'none';
         };
+
+        btnCopyTestError.onclick = () => copyWithFeedback(btnCopyTestError, lastTestError);
 
         btnCloseModal.onclick = () => {
             testModal.classList.remove('active');
@@ -829,13 +913,18 @@ PAGE = """<!doctype html>
                         + "<em>" + data.translated_text.substring(0, 300) + (data.translated_text.length > 300 ? "..." : "") + "</em><br><br>"
                         + '<a href="/download_test" download>📥 Tải file EPUB</a>';
                     testResult.className = 'modal-result success';
+                    btnCopyTestError.style.display = 'none';
                 } else {
                     testResult.textContent = "✗ " + data.message;
                     testResult.className = 'modal-result error';
+                    lastTestError = data.message + (data.detail ? "\n\n" + data.detail : "");
+                    btnCopyTestError.style.display = 'inline-block';
                 }
             } catch (err) {
                 testResult.textContent = "✗ Lỗi kết nối: " + err.message;
                 testResult.className = 'modal-result error';
+                lastTestError = "Lỗi kết nối: " + err.message;
+                btnCopyTestError.style.display = 'inline-block';
             } finally {
                 btnRunTest.disabled = false;
                 btnRunTest.textContent = "Dịch & tạo EPUB";
@@ -957,7 +1046,11 @@ PAGE = """<!doctype html>
                 } else {
                     progressArea.style.display = 'none';
                 }
-                
+
+                fileInfo.textContent = s.raw_file
+                    ? `File thô: ${s.raw_file}  •  File dịch: ${s.translated_file}`
+                    : '';
+
                 if (s.epub) {
                     resultEl.textContent = 'Thành công! File EPUB lưu tại: ' + s.epub;
                     resultEl.className = 'result-box success';
@@ -967,7 +1060,15 @@ PAGE = """<!doctype html>
                 } else {
                     resultEl.style.display = 'none';
                 }
-                
+
+                lastStatus = s;
+                if (s.error_detail) {
+                    errorReport.style.display = 'block';
+                    errorDetailText.textContent = s.error_detail;
+                } else {
+                    errorReport.style.display = 'none';
+                }
+
                 if (s.running) {
                     pollTimeout = setTimeout(poll, 1000);
                 }
@@ -985,9 +1086,30 @@ PAGE = """<!doctype html>
 # Thu muc Documents chung tren Android Termux de app doc sach de dang quet thay
 SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
 
+def force_kill_after_grace(proc, grace=5):
+    """terminate() (SIGTERM) thuong du, nhung neu tien trinh khong thoat trong
+    vai giay (vd ket noi mang treo o tang he dieu hanh) thi kill() (SIGKILL) de
+    dam bao nut "Dung" luon co hieu luc."""
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def sanitize_filename(name: str) -> str:
+    name = re.sub(r'[\\/:*?"<>|]+', "_", name).strip()
+    return name or "truyen"
+
+
 def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False):
     title = title or guess_title(input_val)
-    args = ["python", "pipeline.py", "--title", title]
+    # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
+    # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
+    # tren GUI dung im (giong "treo") hang chuc chuong roi moi hien 1 luc.
+    args = ["python", "-u", "pipeline.py", "--title", title]
     if author:
         args += ["--author", author]
     args += ["--model", model]
@@ -999,9 +1121,19 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
         args += ["--no-style-detect"]
     if no_thinking:
         args += ["--no-thinking"]
-    
-    args += (["--start-url", input_val] if input_val.startswith("http") else ["--raw", input_val])
-    
+
+    if input_val.startswith("http"):
+        # File tho mac dinh cua pipeline.py la 1 ten CO DINH dung chung cho moi
+        # truyen - khong dat --raw rieng se khien 2 truyen khac nhau cao/resume
+        # chung vao 1 file, lam hong ca hai. Dat theo ten truyen de moi truyen
+        # co file rieng va tu resume dung truyen cua chinh no.
+        raw_file = f"{sanitize_filename(title)}_raw.txt"
+        args += ["--start-url", input_val, "--raw", raw_file]
+    else:
+        raw_file = input_val
+        args += ["--raw", raw_file]
+    translated_file = f"{raw_file}.viet.txt"
+
     global CURRENT_PROC
     with LOCK:
         STATE.update(
@@ -1009,16 +1141,29 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
             log="",
             epub=None,
             error=None,
+            error_detail="",
             step="crawling",
             current_chapter=0,
-            total_chapters=0
+            total_chapters=0,
+            stop_requested=False,
+            raw_file=raw_file,
+            translated_file=translated_file
         )
-        
+
     try:
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding="utf-8", errors="replace")
         with LOCK:
             CURRENT_PROC = proc
-            
+            # Nguoi dung co the bam "Dung" ngay trong khoang thoi gian ngan giua
+            # luc STATE["running"] duoc dat True va luc proc/CURRENT_PROC ton tai
+            # o tren - khong ton trong stop_requested o day se lam tien trinh
+            # chay tiep du nguoi dung da bam dung (bug "dung khong duoc").
+            if STATE["stop_requested"]:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
         for line in proc.stdout:
             with LOCK:
                 STATE["log"] += line
@@ -1058,18 +1203,20 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
         with LOCK:
             STATE["running"] = False
             CURRENT_PROC = None
-            
-            # Neu bi terminate hoac gui loi dung
-            if proc.returncode == -15 or proc.returncode == 15 or proc.returncode == 1 or STATE["error"] == "Stopped":
-                if STATE["error"] == "Stopped":
-                    STATE["error"] = "Da dung theo yeu cau."
-                else:
-                    STATE["error"] = "Da dung hoac gap loi he thong."
+
+            # Dung theo yeu cau nguoi dung (nut "Dung", stop_requested da duoc
+            # dat truoc do) - khong phai loi, khong can dinh kem error_detail.
+            if STATE["stop_requested"]:
+                STATE["error"] = "Da dung theo yeu cau."
                 STATE["step"] = "idle"
                 return
-                
+
             if proc.returncode != 0:
-                STATE["error"] = f"Loi (ma {proc.returncode}), xem log o tren."
+                # Loi THUC SU (khong phai nguoi dung bam Dung) - dinh kem duoi
+                # log (thuong chua traceback vi stderr da duoc gop vao stdout o
+                # tren) de nguoi dung copy nguyen van di fix, khong phai doan mo.
+                STATE["error"] = f"Loi (ma thoat {proc.returncode}), xem chi tiet ben duoi."
+                STATE["error_detail"] = STATE["log"][-4000:]
                 STATE["step"] = "idle"
                 return
                 
@@ -1087,7 +1234,8 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
     except Exception as e:
         with LOCK:
             STATE["running"] = False
-            STATE["error"] = f"Loi he thong: {str(e)}"
+            STATE["error"] = f"Loi he thong: {e}"
+            STATE["error_detail"] = traceback.format_exc()
             STATE["step"] = "idle"
             CURRENT_PROC = None
 
@@ -1131,15 +1279,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.startswith("/upload_raw"):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            filename = sanitize_filename(os.path.basename(qs.get("name", [""])[0]) or "cao_tay.txt")
+            length = int(self.headers.get("Content-Length", 0))
+            data = self.rfile.read(length)
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            save_path = os.path.join(UPLOAD_DIR, filename)
+            with open(save_path, "wb") as out:
+                out.write(data)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "path": save_path}, ensure_ascii=False).encode("utf-8"))
+            return
+
         if self.path == "/stop":
             global CURRENT_PROC
+            proc_to_stop = None
             with LOCK:
-                if STATE["running"] and CURRENT_PROC:
+                if STATE["running"]:
                     STATE["error"] = "Stopped"
-                    try:
-                        CURRENT_PROC.terminate()
-                    except Exception:
-                        pass
+                    STATE["stop_requested"] = True
+                    proc_to_stop = CURRENT_PROC
+            if proc_to_stop:
+                try:
+                    proc_to_stop.terminate()
+                except Exception:
+                    pass
+                threading.Thread(target=force_kill_after_grace, args=(proc_to_stop,), daemon=True).start()
             self.send_response(204)
             self.end_headers()
             return
