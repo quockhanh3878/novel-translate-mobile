@@ -4,11 +4,11 @@
 # web tu dong moi lan mo Termux. Sau buoc nay nguoi dung khong can dung dong lenh nao
 # nua - chi mo Termux la vao thang trang web dich truyen.
 set -e
-REPO_URL="https://github.com/tuantran34/MarianMt-fine-tune-zh-vi-50m"
+REPO_URL="https://github.com/quockhanh3878/novel-translate-mobile"
 DEST="$HOME/novel"
 
-echo "== 1/5: Cai python, git, termux-api =="
-pkg update -y && pkg install -y python git termux-api
+echo "== 1/5: Cai python, git, termux-api, pillow, lxml =="
+pkg update -y && pkg install -y python git termux-api python-pillow python-lxml
 
 echo "== 2/5: Tai code =="
 if [ -d "$DEST/.git" ]; then

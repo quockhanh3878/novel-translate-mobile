@@ -2,3 +2,8 @@
 __pycache__/
 .venv/
 model/
+
+# Novel data files, translations, and models
+*.txt
+*.epub
+*.zip
