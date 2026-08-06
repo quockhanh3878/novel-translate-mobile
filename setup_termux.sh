@@ -9,6 +9,7 @@ DEST="$HOME/novel"
 
 echo "== 1/5: Cai python, git, termux-api, pillow, lxml =="
 pkg update -y && pkg install -y python git termux-api python-pillow python-lxml
+# python-pillow da co san tu kho Termux, khong can compile tu source
 
 echo "== 2/5: Tai code =="
 if [ -d "$DEST/.git" ]; then

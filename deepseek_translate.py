@@ -27,7 +27,8 @@ import - khong can thiet cho pipeline goi API nay.
 
 Su dung:
     # .env: DEEPSEEK_API_KEY=sk-xxxx
-    .venv\\Scripts\\python deepseek_translate.py --input truyen.txt --output truyen_viet.txt
+    # PC (Windows): .venv\\Scripts\\python deepseek_translate.py --input truyen.txt --output truyen_viet.txt
+    # Mobile (Termux) / Linux / macOS: .venv/bin/python deepseek_translate.py --input truyen.txt --output truyen_viet.txt
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -44,7 +46,7 @@ from pathlib import Path
 import requests
 
 from crawler import CHAPTER_SEP, count_chapters, parse_chapters
-from text_postprocess import postprocess
+from text_postprocess import postprocess, postprocess_title
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 # Giu ten cu de tuong thich nguoc voi code/test da import truoc do.
@@ -110,15 +112,71 @@ Yeu cau bat buoc:
 7. Tra loi DUY NHAT bang JSON hop le theo dung schema:
    {{"title": "tieu de da dich", "paragraphs": ["doan 1 da dich", ...],
      "new_names": {{"ten_trung_moi": "ten_viet_co_dinh"}}}}
+
+Viec dich TIEU DE CHUONG:
+- Tieu de chuong ngan gon (2-8 tu), mang tinh thanh ngu/ngu co, truc dac.
+- KHONG dich dai nhu cau van, KHONG them chu thich, KHONG viet hoa cau.
+- Uu tien cach dich goi am, ngan gon, de nho. VD: "一念永恒" -> "Nhat niem vinh hang",
+  "Thien dao vo than" -> "Thien dao vo than", "Phuc sinh" -> "Phuc sinh".
+- Giu nguyen phong cach cua tieu de goc (neu goc ngan thi dich cung ngan).
 """
 
 STYLE_SYSTEM_PROMPT = """Ban la bien tap vien tieu thuyet mang giau kinh nghiem.
-Doc doan trich chuong dau cua mot bo truyen tieng Trung va xac dinh phong cach dich
-tieng Viet phu hop nhat, de ap dung NHAT QUAN cho toan bo truyen: the loai (vd tien
-hiep, do thi, ngon tinh, trinh tham...), giong van (nghiem tuc/hai huoc/gai goc...),
-muc do trang trong hay khau ngu, cach xung ho giua cac nhan vat.
-Tra loi DUY NHAT bang JSON: {"style_guide": "mo ta ngan gon 2-4 cau"}
+Ban se doc nhieu doan trich tu NHIEU CHUONG khac nhau cua mot bo truyen tieng Trung
+(lay tu dau, giua va cuoi truyen) va xac dinh phong cach dich tieng Viet phu hop nhat,
+de ap dung NHAT QUAN cho toan bo truyen: the loai (vd tien hiep, do thi, ngon tinh,
+trinh tham...), giong van (nghiem tuc/hai huoc/gai goc...), muc do trang trong hay
+khau ngu, cach xung ho giua cac nhan vat.
+
+Quan trong: phai tong hop tu nhieu mau o nhieu vung khac nhau trong truyen, khong chi
+danh gia tren 1 chuong duy nhat. Neu phong cach thay doi giua cac vung, hay uu tien
+phong cach CHUNG (xuat hien nhieu nhat) va ghi ro su thay doi neu co.
+Tra loi DUY NHAT bang JSON: {"style_guide": "mo ta ngan gon 3-6 cau, bao gom the loai,
+giong van, muc do trang trong/khau ngu, cach xung ho, va phan tich tu nhieu vung truyen"}
 """
+
+
+def sample_for_style(chapters: list[dict], num_chapters: int = 5, paragraphs_per_chapter: int = 30) -> list[dict]:
+    """Chon ngau nhien cac chuong tu 3 vung (dau/giua/cuoi) de phan tich van phong.
+
+    Tra ve list[dict] voi moi dict la {"title": ..., "paragraphs": [...]}.
+    """
+    valid = [c for c in chapters if c.get("paragraphs")]
+    if not valid:
+        return []
+    n = len(valid)
+    if n <= num_chapters:
+        selected = valid
+    else:
+        # Chia 3 zone: dau (20%), giua (60%), cuoi (20%)
+        zone_size = max(1, n // 5)
+        first_zone = valid[:zone_size]
+        mid_start = max(zone_size, n // 2 - zone_size)
+        mid_end = min(n - zone_size, n // 2 + zone_size)
+        mid_zone = valid[mid_start:mid_end]
+        last_zone = valid[max(mid_end, n - zone_size):]
+
+        # Lay 1-2 chuong ngau nhien tu moi zone
+        per_zone = max(1, num_chapters // 3)
+        sampled = []
+        for zone in [first_zone, mid_zone, last_zone]:
+            k = min(per_zone, len(zone))
+            sampled.extend(random.sample(zone, k))
+        # Neu con thieu, lay them tu toan bo
+        remaining = [c for c in valid if c not in sampled]
+        deficit = num_chapters - len(sampled)
+        if deficit > 0 and remaining:
+            sampled.extend(random.sample(remaining, min(deficit, len(remaining))))
+        selected = sampled[:num_chapters]
+
+    # Lay ngau nhien paragraphs tu moi chuong
+    result = []
+    for ch in selected:
+        paras = ch["paragraphs"]
+        k = min(paragraphs_per_chapter, len(paras))
+        sampled_paras = random.sample(paras, k) if k < len(paras) else paras
+        result.append({"title": ch.get("title", ""), "paragraphs": sampled_paras})
+    return result
 
 
 def load_dotenv(path: str = ".env") -> None:
@@ -147,9 +205,59 @@ def save_glossary(path: str, glossary: dict) -> None:
         json.dump(glossary, f, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+# --- Glossary Meta (tracking last_seen chapter + frequency) ---
+
+def _meta_path(glossary_path: str) -> str:
+    return glossary_path.rsplit(".", 1)[0] + "_meta.json"
+
+
+def load_glossary_meta(glossary_path: str) -> dict:
+    p = Path(_meta_path(glossary_path))
+    if not p.exists():
+        return {}
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_glossary_meta(glossary_path: str, meta: dict) -> None:
+    with open(_meta_path(glossary_path), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def update_glossary_meta(meta: dict, new_names: dict, chapter_idx: int) -> dict:
+    """Cap nhat metadata cho cac entry moi/da co."""
+    for zh, vi in new_names.items():
+        if zh in meta:
+            meta[zh]["last_seen"] = chapter_idx
+            meta[zh]["count"] = meta[zh].get("count", 0) + 1
+        else:
+            meta[zh] = {"last_seen": chapter_idx, "count": 1}
+    return meta
+
+
+def filter_glossary(glossary: dict, meta: dict, current_chapter: int,
+                     max_entries: int = 50, recent_window: int = 50) -> dict:
+    """Loc glossary chi gui nhung entry quan trong (gan day hoac tan suat cao)."""
+    if not meta or len(glossary) <= max_entries:
+        return glossary
+
+    scored: list[tuple[float, str, str]] = []
+    for zh, vi in glossary.items():
+        m = meta.get(zh, {})
+        last = m.get("last_seen", 0)
+        count = m.get("count", 1)
+        recency = 1.0 if (current_chapter - last) <= recent_window else 0.0
+        # Diem: recency (0/1) + tan suat (0-1 normalize)
+        score = recency * 2.0 + min(count / 20.0, 1.0)
+        scored.append((score, zh, vi))
+
+    scored.sort(reverse=True)
+    return {zh: vi for _, zh, vi in scored[:max_entries]}
+
+
 def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str,
                    temperature: float, max_retries: int = 5, thinking: bool = False,
-                   max_tokens: int = 4096) -> dict:
+                   max_tokens: int = 4096, should_stop=None) -> dict:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
@@ -176,6 +284,8 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
     }
     last_err = None
     for attempt in range(max_retries):
+        if should_stop and should_stop():
+            raise RuntimeError("Da dung theo yeu cau.")
         try:
             resp = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=180)
             if resp.status_code == 200:
@@ -191,12 +301,22 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
     raise RuntimeError(f"DeepSeek API failed after {max_retries} attempts: {last_err}")
 
 
-def detect_style_guide(first_chapter: dict, api_key: str, model: str) -> str:
-    sample = "\n".join(first_chapter["paragraphs"][:15])
-    user_prompt = f"Tieu de: {first_chapter['title']}\n\nNoi dung:\n{sample}"
+def detect_style_guide(chapters: list[dict], api_key: str, model: str,
+                       should_stop=None) -> str:
+    """Phan tich van phong tu nhieu chuong nhau trong truyen."""
+    sampled = sample_for_style(chapters)
+    if not sampled:
+        return ""
+    parts = []
+    for i, ch in enumerate(sampled):
+        label = f"Chuong {i + 1}" + (f" ({ch['title']})" if ch.get("title") else "")
+        body = "\n".join(ch["paragraphs"])
+        parts.append(f"--- {label} ---\n{body}")
+    user_prompt = "\n\n".join(parts)
     try:
         data = call_deepseek(STYLE_SYSTEM_PROMPT, user_prompt, api_key, model, temperature=1.0,
-                              max_retries=3, thinking=True, max_tokens=8192)
+                              max_retries=3, thinking=True, max_tokens=8192,
+                              should_stop=should_stop)
         return data.get("style_guide", "").strip()
     except RuntimeError:
         return ""
@@ -214,7 +334,8 @@ def build_user_prompt(chapter: dict, glossary: dict) -> str:
 
 
 def translate_chapter(chapter: dict, glossary: dict, system_prompt: str, api_key: str,
-                       model: str, temperature: float, thinking: bool = True) -> dict:
+                       model: str, temperature: float, thinking: bool = True,
+                       should_stop=None) -> dict:
     user_prompt = build_user_prompt(chapter, glossary)
     # max_tokens la tran chung cho CA reasoning_content LAN content khi thinking bat -
     # da kiem chung thuc te: voi 16384, 1 chuong ~70 doan bi reasoning "an" het tran
@@ -222,8 +343,8 @@ def translate_chapter(chapter: dict, glossary: dict, system_prompt: str, api_key
     # value". Dat cao han han (con rat nho so tran 384K cua model, khong ton them phi
     # vi tinh theo token THUC TE sinh ra) de chua du reasoning cho chuong dai.
     result = call_deepseek(system_prompt, user_prompt, api_key, model, temperature,
-                            thinking=thinking, max_tokens=131072)
-    title = postprocess(result["title"]) if result.get("title") else chapter["title"]
+                            thinking=thinking, max_tokens=131072, should_stop=should_stop)
+    title = postprocess_title(result["title"]) if result.get("title") else chapter["title"]
     paragraphs = [postprocess(p) for p in result.get("paragraphs", []) if p and p.strip()]
     new_names = {
         str(k).strip(): str(v).strip()
@@ -250,6 +371,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
         the dich xuyen qua luc bat dau/ket thuc gio cao diem.
     """
     glossary = load_glossary(glossary_path)
+    glossary_meta = load_glossary_meta(glossary_path)
     log(f"Da nap {len(glossary)} thuat ngu tu {glossary_path}.")
 
     chapters = parse_chapters(input_file)
@@ -257,6 +379,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
 
     done = count_translated_chapters(output_file)
     pending = chapters[done:]
+    failed_chapters: list[dict] = []
     log(f"Da dich {done} chuong truoc do, con lai {len(pending)} chuong.")
 
     if not pending:
@@ -268,20 +391,20 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
 
     style_guide = ""
     if style_detect:
-        # chapters[0] co the la header rong (crawl_novel luon chen "=== TRUYỆN ===" lam
-        # dong dau file, khong co doan van nao) - lay chuong dau tien THUC SU co noi
-        # dung de phan tich van phong, tranh style_guide rong/vo nghia.
-        sample_chapter = next((c for c in chapters if c["paragraphs"]), chapters[0])
-        log("Dang phan tich van phong tu chuong dau...")
-        style_guide = detect_style_guide(sample_chapter, api_key, model)
+        log("Dang phan tich van phong tu nhieu chuong (dau/giua/cuoi)...")
+        style_guide = detect_style_guide(chapters, api_key, model, should_stop=should_stop)
         log(f"Van phong xac dinh: {style_guide or '(khong xac dinh duoc, dung mac dinh)'}")
 
     style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
 
-    def _work(ch):
-        return translate_chapter(ch, glossary, system_prompt, api_key, model,
-                                  temperature, thinking=thinking)
+    if workers > 1:
+        log(f"CANH BAO: workers={workers} - nhieu chapter dich song song co the lam mat nhat quan ten rieng.")
+
+    def _work(ch, chapter_idx):
+        filtered = filter_glossary(glossary, glossary_meta, chapter_idx)
+        return translate_chapter(ch, filtered, system_prompt, api_key, model,
+                                  temperature, thinking=thinking, should_stop=should_stop)
 
     # Nop theo tung dot toi da `workers` chuong (khong dung executor.map()): map() nop
     # HET pending ngay lap tuc bat ke so worker, nen bam "Dung" van khong ngan duoc cac
@@ -297,10 +420,18 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                     break
 
                 batch = pending[batch_start:batch_start + workers]
-                futures = [executor.submit(_work, ch) for ch in batch]
+                futures = [executor.submit(_work, ch, done + batch_start + offset + 1)
+                           for offset, ch in enumerate(batch)]
                 for offset, (ch, fut) in enumerate(zip(batch, futures)):
                     idx = done + batch_start + offset + 1
-                    translated = fut.result()
+                    try:
+                        translated = fut.result()
+                    except Exception as e:
+                        log(f"[{idx}/{len(chapters)}] LOI chapter '{ch['title']}': {type(e).__name__}: {e}")
+                        failed_chapters.append({"index": idx, "title": ch["title"], "error": str(e)})
+                        if on_chapter:
+                            on_chapter(idx, len(chapters), None)
+                        continue
 
                     f_out.write(f"=== {translated['title']} ===\n\n")
                     for p in translated["paragraphs"]:
@@ -311,6 +442,8 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                     if translated["new_names"]:
                         glossary.update(translated["new_names"])
                         save_glossary(glossary_path, glossary)
+                        glossary_meta = update_glossary_meta(glossary_meta, translated["new_names"], idx)
+                        save_glossary_meta(glossary_path, glossary_meta)
 
                     log(f"[{idx}/{len(chapters)}] {ch['title']} -> {translated['title']}"
                         + (f" (+{len(translated['new_names'])} ten moi)" if translated["new_names"] else ""))
@@ -323,8 +456,14 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                     stopped = True
                     break
 
-    if not stopped:
+    if failed_chapters:
+        log(f"\nThanh cong: {len(chapters) - len(failed_chapters)}/{len(chapters)} chuong.")
+        log(f"That bai {len(failed_chapters)} chuong:")
+        for fc in failed_chapters:
+            log(f"  - Chuong {fc['index']}: {fc['title']} | {fc['error']}")
+    elif not stopped:
         log("Hoan tat dich thuat!")
+    return failed_chapters
 
 
 def main():

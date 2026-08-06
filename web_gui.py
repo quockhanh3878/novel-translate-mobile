@@ -137,7 +137,7 @@ PAGE = """<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
     <title>Trình dịch Truyện DeepSeek</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -163,6 +163,10 @@ PAGE = """<!doctype html>
             margin: 0;
             min-height: 100vh;
             padding: 20px;
+            padding-top: max(20px, env(safe-area-inset-top));
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+            padding-left: max(20px, env(safe-area-inset-left));
+            padding-right: max(20px, env(safe-area-inset-right));
             box-sizing: border-box;
         }
         .container {
@@ -559,6 +563,180 @@ PAGE = """<!doctype html>
             color: var(--accent-cyan);
             text-decoration: underline;
         }
+
+        /* ===== Mobile Portrait Optimizations ===== */
+        .api-key-form {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 6px;
+        }
+        .api-key-form input {
+            margin: 0;
+            flex: 1;
+            min-width: 0;
+        }
+        .api-key-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .api-key-actions button {
+            min-width: 0;
+            flex: 0 0 auto;
+        }
+        .file-upload-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: -10px 0 16px 0;
+        }
+        .checkbox-group input[type="checkbox"] {
+            min-width: 18px;
+            min-height: 18px;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 12px;
+                padding-top: max(12px, env(safe-area-inset-top));
+                padding-bottom: max(12px, env(safe-area-inset-bottom));
+            }
+            .container {
+                margin: 8px auto;
+                padding: 18px 14px;
+                border-radius: 14px;
+            }
+            h2 {
+                font-size: 22px;
+                margin-bottom: 16px;
+            }
+            .subtitle {
+                font-size: 12px;
+                margin-top: -14px;
+                margin-bottom: 20px;
+            }
+            label {
+                font-size: 13px;
+                margin-top: 10px;
+            }
+            input, select {
+                padding: 11px 14px;
+                font-size: 14px;
+                border-radius: 8px;
+            }
+            button {
+                padding: 13px;
+                font-size: 15px;
+                min-height: 44px;
+            }
+            .api-key-form {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .api-key-actions {
+                flex-wrap: wrap;
+            }
+            .api-key-actions button {
+                flex: 1 1 calc(50% - 4px);
+                min-height: 44px;
+                padding: 11px 8px;
+                font-size: 13px;
+            }
+            .file-upload-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+            }
+            .advanced-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+                padding: 12px;
+            }
+            .col-span-2 {
+                grid-column: span 1;
+            }
+            .btn-group {
+                gap: 8px;
+                margin-top: 16px;
+            }
+            .btn-group button {
+                padding: 13px;
+            }
+            .steps {
+                margin: 18px 0;
+            }
+            .step {
+                font-size: 10px;
+            }
+            .step-dot {
+                width: 28px;
+                height: 28px;
+                font-size: 12px;
+                margin-bottom: 6px;
+            }
+            pre {
+                padding: 12px;
+                font-size: 11px;
+                max-height: 200px;
+                border-radius: 10px;
+            }
+            .modal-overlay {
+                align-items: flex-end;
+            }
+            .modal-box {
+                width: 100%;
+                max-width: 100%;
+                border-radius: 16px 16px 0 0;
+                max-height: 80vh;
+                padding: 20px 16px;
+                padding-bottom: max(20px, env(safe-area-inset-bottom));
+            }
+            .modal-box h3 {
+                font-size: 16px;
+            }
+            .modal-box textarea {
+                min-height: 80px;
+                font-size: 14px;
+            }
+            .modal-btn {
+                padding: 12px;
+                min-height: 44px;
+                font-size: 14px;
+            }
+            .result-box {
+                font-size: 13px;
+                padding: 12px;
+                border-radius: 8px;
+            }
+            .console-header {
+                margin-top: 20px;
+            }
+            .error-report pre {
+                max-height: 150px;
+            }
+        }
+
+        @media (max-width: 360px) {
+            .container {
+                margin: 4px auto;
+                padding: 14px 10px;
+            }
+            h2 {
+                font-size: 20px;
+            }
+            .api-key-actions button {
+                flex: 1 1 100%;
+            }
+            .step {
+                font-size: 9px;
+            }
+            .step-dot {
+                width: 24px;
+                height: 24px;
+                font-size: 11px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -572,11 +750,13 @@ PAGE = """<!doctype html>
 
         <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); padding: 16px; border-radius: 12px; margin-bottom: 24px;">
             <label style="margin-top: 0;">DeepSeek API Key (sk-...):</label>
-            <form onsubmit="return false;" style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
-                <input type="password" autocomplete="off" id="api_key_input" placeholder="Nhập sk-..." style="margin: 0; flex: 1;">
-                <button type="button" id="btn-save-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
-                <button type="button" id="btn-test-key" style="flex: 0 0 90px; padding: 12px; margin: 0; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
-                <button type="button" id="btn-test-translate" style="flex: 0 0 100px; padding: 12px; margin: 0; font-size: 14px; background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
+            <form onsubmit="return false;" class="api-key-form">
+                <input type="password" autocomplete="off" id="api_key_input" placeholder="Nhập sk-...">
+                <div class="api-key-actions">
+                    <button type="button" id="btn-save-key" style="background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
+                    <button type="button" id="btn-test-key" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
+                    <button type="button" id="btn-test-translate" style="background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
+                </div>
             </form>
             <div style="display:flex; align-items:center; gap:8px; margin-top: 8px;">
                 <div id="key-status" style="font-size: 12px; color: var(--text-muted); flex:1;">Đang kiểm tra API Key...</div>
@@ -587,8 +767,8 @@ PAGE = """<!doctype html>
         <form id="f">
             <label>Nguồn truyện:</label>
             <input name="input" id="input_source" placeholder="URL chương 1 (ví dụ: ..._1.html) hoặc đường dẫn file .txt thô" required>
-            <div style="display:flex; align-items:center; gap:10px; margin: -10px 0 16px 0;">
-                <label for="raw_file_input" style="margin:0; flex:0 0 auto; font-weight:500; font-size:13px; color:var(--text-muted); cursor:pointer; text-decoration:underline;">📂 Hoặc chọn file đã cào sẵn từ máy...</label>
+            <div class="file-upload-row">
+                <label for="raw_file_input" style="margin:0; flex:0 0 auto; font-weight:500; font-size:13px; color:var(--text-muted); cursor:pointer; text-decoration:underline;">Hoặc chọn file đã cào sẵn từ máy...</label>
                 <input type="file" id="raw_file_input" accept=".txt,text/plain" style="display:none;">
             </div>
             <div id="raw_file_status" style="font-size:12px; margin: -12px 0 16px 0; color: var(--text-muted); display:none;"></div>
@@ -626,7 +806,7 @@ PAGE = """<!doctype html>
                         </div>
                         <div class="checkbox-group">
                             <input type="checkbox" name="no_style_detect" id="no_style_detect">
-                            <label for="no_style_detect" style="display:inline;margin:0;font-weight:normal;">Không tự động phân tích văn phong chương đầu</label>
+                            <label for="no_style_detect" style="display:inline;margin:0;font-weight:normal;">Không tự động phân tích văn phong (nhiều chương)</label>
                         </div>
                         <div class="checkbox-group">
                             <input type="checkbox" name="no_thinking" id="no_thinking">
@@ -1106,7 +1286,8 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
     # tren GUI dung im (giong "treo") hang chuc chuong roi moi hien 1 luc.
-    args = ["python", "-u", "pipeline.py", "--title", title]
+    import sys
+    args = [sys.executable, "-u", "pipeline.py", "--title", title]
     if author:
         args += ["--author", author]
     args += ["--model", model]

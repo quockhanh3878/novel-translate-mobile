@@ -184,7 +184,7 @@ class AppGUI(tk.Tk):
         ttk.Checkbutton(opts_frame, text="Bật thinking mode (bắt buộc để dịch đúng - tắt sẽ chỉ echo nguyên văn)",
                          variable=self.var_thinking).grid(row=2, column=0, columnspan=2, sticky="w")
         self.var_style_detect = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opts_frame, text="Tự phát hiện văn phong từ chương đầu",
+        ttk.Checkbutton(opts_frame, text="Tự phát hiện văn phong (nhiều chương đầu/giữa/cuối)",
                          variable=self.var_style_detect).grid(row=3, column=0, columnspan=2, sticky="w")
         self.var_avoid_peak = tk.BooleanVar(value=True)
         ttk.Checkbutton(opts_frame, text="Tránh giờ cao điểm DeepSeek (9-12h, 14-18h giờ Bắc Kinh, giá gấp đôi)",

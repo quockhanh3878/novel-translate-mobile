@@ -7,8 +7,10 @@ Tach rieng khoi novel_gui.py vi novel_gui.py import app.py -> nap model MarianMT
 (ONNX) ngay khi import, khong can thiet cho buoc dong goi EPUB don thuan.
 
 Su dung:
-    .venv\\Scripts\\python build_epub.py --input truyen_viet_deepseek.txt ^
-        --title "Đệ Tam Trùng Nhân Cách" --author "Thường Thư Hân"
+    # PC (Windows):
+    .venv\\Scripts\\python build_epub.py --input truyen_viet.txt --title "Ten Truyen" --author "Tac gia"
+    # Mobile (Termux) / Linux / macOS:
+    .venv/bin/python build_epub.py --input truyen_viet.txt --title "Ten Truyen" --author "Tac gia"
 """
 
 from __future__ import annotations

@@ -7,12 +7,17 @@ cua tung file (khong subprocess, khong trung logic).
 
 Su dung:
     # .env: DEEPSEEK_API_KEY=sk-xxxx
+    # PC (Windows):
     .venv\\Scripts\\python pipeline.py \\
-        --start-url "https://www.wa01.com/novel/pagea/ten-truyen_1.html" \\
+        --start-url "https://example.com/chuong-1.html" \\
+        --title "Ten Truyen" --author "Tac gia"
+    # Mobile (Termux) / Linux / macOS:
+    .venv/bin/python pipeline.py \\
+        --start-url "https://example.com/chuong-1.html" \\
         --title "Ten Truyen" --author "Tac gia"
 
 Da co san file tho (vd da cao truoc do) thi bo --start-url, chi truyen --raw:
-    .venv\\Scripts\\python pipeline.py --raw truyen_da_cao.txt --title "Ten Truyen"
+    python pipeline.py --raw truyen_da_cao.txt --ten "Ten Truyen"
 
 Chay lai lenh cu se tu resume: bo qua chuong da cao (crawler noi tiep tu cuoi file
 raw neu dung lai --start-url tro ve chuong 1) va bo qua chuong da dich (dua vao so
@@ -23,7 +28,20 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
+
+_stop_flag = False
+
+
+def _handle_sigterm(signum, frame):
+    global _stop_flag
+    _stop_flag = True
+    print("\n[DUNG] Nhan SIGTERM, dang dung sau chuong hien tai...")
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
 from crawler import DEFAULT_OUTPUT, crawl_novel
@@ -70,7 +88,7 @@ def main():
 
     print("=== Buoc 1/3: Cao truyen ===")
     if args.start_url:
-        crawl_novel(args.start_url, args.raw)
+        crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
     elif os.path.exists(args.raw):
         print(f"Bo qua cao - da co san {args.raw}.")
     else:
@@ -78,12 +96,17 @@ def main():
         sys.exit(1)
 
     print("\n=== Buoc 2/3: Dich bang DeepSeek API ===")
-    translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
+    failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
                      temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
-                     style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak)
+                     style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
+                     should_stop=lambda: _stop_flag)
 
     print("\n=== Buoc 3/3: Dong goi EPUB ===")
     epub_path = args.epub or f"{args.title}.epub"
+    if failed:
+        print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB se KHONG day du.")
+        for fc in failed:
+            print(f"  - Chuong {fc['index']}: {fc['title']}")
     build_epub(translated_file, epub_path, args.title, args.author)
     print(f"\nHoan tat! EPUB: {epub_path}")
 

@@ -97,3 +97,14 @@ def postprocess(text: str) -> str:
     text = re.sub(r"[,;]\s*$", ".", text)
     text = re.sub(r":\s*$", ".", text)
     return text.strip()
+
+
+def postprocess_title(title: str) -> str:
+    """Hau xu ly cho ten chuong: giu ngan gon, chi don sach dau xuong & khoang trang thua."""
+    title = title.strip()
+    # Xoa dau cau o dau/cuoi (neu AI dich them)
+    title = re.sub(r"^[\s,;.\-!?]+", "", title)
+    title = re.sub(r"[,;.\-!?]+\s*$", "", title)
+    # Gop khoang trang thua
+    title = re.sub(r"\s+", " ", title)
+    return title.strip()

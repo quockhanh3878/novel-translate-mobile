@@ -8,10 +8,12 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 
 * 🕷️ **Cào truyện thông minh**: Tự động lấy nội dung từ URL chương nguồn. Tích hợp thời gian chờ lịch sự (delay 1-5 giây) giúp tránh bị máy chủ chặn IP (Anti-scraping bypass).
 * 🤖 **Dịch thuật AI chất lượng cao**: Kết nối trực tiếp tới API DeepSeek (`deepseek-v4-flash`, `deepseek-chat`,...) với Prompt được tinh chỉnh tối ưu cho dịch thuật văn học Trung-Việt.
-* 📖 **Đồng bộ Thuật ngữ (Smart Glossary)**: Tự động trích xuất và quản lý tên riêng, từ Hán Việt khó, danh từ riêng qua file `glossary.json`. Khi dịch, AI sẽ phát hiện các thuật ngữ mới và tự động cập nhật ngược lại vào từ điển để áp dụng cho các chương sau.
-* ✍️ **Đồng bộ Văn phong (Dynamic Style Guide)**: Tự động phân tích chương đầu tiên để học hỏi giọng văn, phong cách viết (kiếm hiệp, ngôn tình, đô thị...) và áp dụng vào System Prompt của toàn bộ truyện.
-* 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản (loại bỏ quảng cáo, rác HTML, thẻ thừa) và xuất ra file sách điện tử `.epub` có mục lục hoàn chỉnh để đọc trên điện thoại/máy đọc sách.
+* 📖 **Đồng bộ Thuật ngữ thông minh (Smart Glossary + Sliding Window)**: Tự động trích xuất và quản lý tên riêng, từ Hán Việt khó, danh từ riêng qua file `glossary.json`. Hệ thống tự động theo dõi tần suất sử dụng và thời gian xuất hiện gần nhất của mỗi thuật ngữ, chỉ gửi ~50 thuật ngữ quan trọng nhất vào context window (thay vì toàn bộ 500+ entries) → tiết kiệm token, tránh gây nhiễu cho model.
+* ✍️ **Đồng bộ Văn phong (Multi-Chapter Style Detection)**: Tự động phân tích ngẫu nhiên 5 chương trải đều từ đầu đến cuối truyện (mỗi chương ~30 đoạn) để tổng hợp phong cách dịch phù hợp nhất (the loại, giọng văn, mức độ trang trọng, cách xung hô). Kết quả style guide 3-6 câu được áp dụng nhất quán cho toàn bộ truyện.
+* 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản (loại bỏ quảng cáo, rác HTML, thẻ thừa) và xuất ra file sách điện tử `.epub` có mục lục hoàn chỉnh để đọc trên điện thoại/máy đọc sách. Cảnh báo rõ ràng nếu EPUB thiếu chương do lỗi dịch.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện có file thô/file dịch riêng theo tên truyện, nên khi bị gián đoạn (mất mạng, hết pin, bấm Dừng), chạy lại đúng truyện đó sẽ tự động bỏ qua các chương đã cào hoặc đã dịch thành công trước đó mà không lẫn sang truyện khác.
+* ⏹️ **Nút Dừng đáng tin cậy**: Bấm "Dừng" sẽ gửi tín hiệu SIGTERM → dừng ngay lập tức sau chương đang xử lý, không gửi thêm API request nào khác. Không cần chờ hết timeout hay retry.
+* 🔄 **Bỏ qua chapter lỗi**: Nếu 1 chương gặp lỗi API (timeout, connection error...), hệ thống tự động bỏ qua chương đó, ghi nhận lỗi, và tiếp tục dịch các chương còn lại. Danh sách chapter lỗi được in rõ ràng khi hoàn thành.
 * 📂 **Chọn file đã cào sẵn**: Ngoài nhập URL, có thể chọn thẳng 1 file `.txt` đã cào sẵn từ bộ nhớ máy (qua Web GUI) để dịch/đóng gói lại mà không cần cào lại từ đầu.
 * 🧪 **Dịch thử trước khi chạy**: Dịch nhanh 1 đoạn văn mẫu và xuất EPUB thử để kiểm tra API Key/chất lượng dịch trước khi chạy cả truyện.
 * 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm của DeepSeek (9:00 - 12:00 và 14:00 - 18:00 giờ Bắc Kinh, khi giá API tăng gấp đôi) để tạm dừng dịch và tự động tiếp tục khi hết giờ, hoặc tùy chọn bỏ qua kiểm tra này.
@@ -102,9 +104,9 @@ python pipeline.py --start-url "https://example.com/chuong-1.html" --title "Tên
     ```
 *   Các tham số CLI bổ sung có sẵn trong `pipeline.py`:
     *   `--model`: Model dịch thuật (Mặc định: `deepseek-v4-flash`).
-    *   `--workers`: Số luồng dịch song song (Mặc định: `1` để đảm bảo tính nhất quán của glossary).
+    *   `--workers`: Số luồng dịch song song (Mặc định: `1` để đảm bảo tính nhất quán của glossary. **Lưu ý**: workers > 1 có thể làm mất nhất quán tên riêng giữa các chương dịch song song).
     *   `--temperature`: Độ sáng tạo khi dịch (Mặc định: `1.3`).
-    *   `--no-style-detect`: Bỏ qua bước tự động nhận diện văn phong chương 1.
+    *   `--no-style-detect`: Bỏ qua bước tự động nhận diện văn phong (nhiều chương đầu/giữa/cuối).
     *   `--allow-peak`: Cho phép tiếp tục gọi API kể cả trong khung giờ cao điểm (giá nhân đôi).
 
 ---
@@ -123,16 +125,30 @@ File `glossary.json` ở thư mục gốc giúp bạn định nghĩa trước c�
 ```
 *Hệ thống dịch thuật sẽ tự động nạp file này làm ngữ cảnh đầu vào và cập nhật thêm các nhân vật/thuật ngữ mới phát hiện được trong quá trình dịch.*
 
+### Glossary Sliding Window
+Hệ thống tự động theo dõi tần suất sử dụng của mỗi thuật ngữ qua file `glossary_meta.json` (tự tạo):
+```json
+{
+  "陆渊": {"last_seen": 42, "count": 15},
+  "苏沐雨": {"last_seen": 38, "count": 12},
+  "路人甲": {"last_seen": 5, "count": 2}
+}
+```
+Khi dịch, chỉ gửi ~50 thuật ngữ quan trọng nhất (xuất hiện trong 50 chapter gần nhất hoặc có tần suất cao) vào prompt. Điều này giúp:
+- Tiết kiệm token (500-1000 tokens thay vì 7500+)
+- Tránh gây nhiễu cho model với quá nhiều thuật ngữ phụ
+- Tên nhân vật chính luôn được ưu tiên (tần suất cao)
+
 ---
 
 ## 📂 Cấu trúc mã nguồn chính
 
 *   [web_gui.py](web_gui.py): File khởi chạy giao diện Web GUI (bao gồm chọn file đã cào sẵn, dịch thử, nút Dừng, báo lỗi copy được).
-*   [pipeline.py](pipeline.py): Tập lệnh liên kết toàn bộ chuỗi xử lý (Cào -> Dịch -> Đóng gói).
+*   [pipeline.py](pipeline.py): Tập lệnh liên kết toàn bộ chuỗi xử lý (Cào -> Dịch -> Đóng gói). Xử lý tín hiệu dừng (SIGTERM) để dừng gracefully.
 *   [crawler.py](crawler.py): Module chịu trách nhiệm tải văn bản từ trang web nguồn.
-*   [deepseek_translate.py](deepseek_translate.py): Module kết nối API DeepSeek, xử lý Glossary và Style Guide.
+*   [deepseek_translate.py](deepseek_translate.py): Module kết nối API DeepSeek, xử lý Glossary (sliding window), Style Guide (multi-chapter sampling), và skip chapter lỗi.
 *   [build_epub.py](build_epub.py): Module đóng gói thành phẩm thành định dạng sách điện tử EPUB.
-*   [text_postprocess.py](text_postprocess.py): Module hậu xử lý, chuẩn hóa chính tả và làm sạch văn bản tiếng Việt sau dịch.
+*   [text_postprocess.py](text_postprocess.py): Module hậu xử lý, chuẩn hóa chính tả và làm sạch văn bản tiếng Việt sau dịch. Bao gồm `postprocess_title()` riêng cho tên chương.
 *   [setup_termux.sh](setup_termux.sh): Kịch bản tự động thiết lập ban đầu trên Termux.
 *   [run_termux.sh](run_termux.sh): Kịch bản bổ trợ khởi chạy nhanh / tích hợp Widget trên điện thoại Android.
 
