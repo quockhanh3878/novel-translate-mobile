@@ -11,6 +11,8 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * 📖 **Đồng bộ Thuật ngữ thông minh (Smart Glossary + Sliding Window)**: Tự động trích xuất và quản lý tên riêng, từ Hán Việt khó, danh từ riêng qua file `glossary.json`. Hệ thống tự động theo dõi tần suất sử dụng và thời gian xuất hiện gần nhất của mỗi thuật ngữ, chỉ gửi ~50 thuật ngữ quan trọng nhất vào context window (thay vì toàn bộ 500+ entries) → tiết kiệm token, tránh gây nhiễu cho model.
 * ✍️ **Đồng bộ Văn phong (Multi-Chapter Style Detection)**: Tự động phân tích ngẫu nhiên 5 chương trải đều từ đầu đến cuối truyện (mỗi chương ~30 đoạn) để tổng hợp phong cách dịch phù hợp nhất (the loại, giọng văn, mức độ trang trọng, cách xung hô). Kết quả style guide 3-6 câu được áp dụng nhất quán cho toàn bộ truyện.
 * 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản (loại bỏ quảng cáo, rác HTML, thẻ thừa) và xuất ra file sách điện tử `.epub` có mục lục hoàn chỉnh để đọc trên điện thoại/máy đọc sách. Cảnh báo rõ ràng nếu EPUB thiếu chương do lỗi dịch.
+* 📄 **PDF phòng hờ cho Termux**: Chọn định dạng EPUB, PDF hoặc cả hai ngay trên Web GUI. PDF hữu ích khi thiết bị chưa cài reader EPUB nhưng có sẵn viewer PDF (Google Drive, Files by Google, WPS,...). Tự dò font TTF hỗ trợ tiếng Việt trên hệ thống (Roboto/Noto trên Android, DejaVu trên Termux/Linux, Arial/Segoe trên Windows/macOS).
+* 💾 **Tuân thủ Android Scoped Storage (API 30+)**: Kết quả EPUB/PDF được lưu vào `~/storage/shared/Documents/DichTruyen/` (symlink hợp lệ do `termux-setup-storage` tạo) — user thấy ngay trong app quản lý file, không cần `MANAGE_EXTERNAL_STORAGE`. Tự động gọi `termux-media-scan` để reader mới hiện file tức thì (không cần khởi động lại máy). Trên PC lưu vào `~/Documents/DichTruyen/`.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện có file thô/file dịch riêng theo tên truyện, nên khi bị gián đoạn (mất mạng, hết pin, bấm Dừng), chạy lại đúng truyện đó sẽ tự động bỏ qua các chương đã cào hoặc đã dịch thành công trước đó mà không lẫn sang truyện khác.
 * ⏹️ **Nút Dừng đáng tin cậy**: Bấm "Dừng" sẽ gửi tín hiệu SIGTERM → dừng ngay lập tức sau chương đang xử lý, không gửi thêm API request nào khác. Không cần chờ hết timeout hay retry.
 * 🔄 **Bỏ qua chapter lỗi**: Nếu 1 chương gặp lỗi API (timeout, connection error...), hệ thống tự động bỏ qua chương đó, ghi nhận lỗi, và tiếp tục dịch các chương còn lại. Danh sách chapter lỗi được in rõ ràng khi hoàn thành.
@@ -108,6 +110,8 @@ python pipeline.py --start-url "https://example.com/chuong-1.html" --title "Tên
     *   `--temperature`: Độ sáng tạo khi dịch (Mặc định: `1.3`).
     *   `--no-style-detect`: Bỏ qua bước tự động nhận diện văn phong (nhiều chương đầu/giữa/cuối).
     *   `--allow-peak`: Cho phép tiếp tục gọi API kể cả trong khung giờ cao điểm (giá nhân đôi).
+    *   `--formats`: Định dạng xuất, chọn `epub` (mặc định), `pdf` (phòng hờ), hoặc `both`.
+    *   `--to-documents` / `--no-to-documents`: Tự động di chuyển sản phẩm vào `Documents/DichTruyen` sau khi xong (mặc định BẬT trên Termux, TẮT trên PC — dùng cờ để override).
 
 ---
 
@@ -148,6 +152,8 @@ Khi dịch, chỉ gửi ~50 thuật ngữ quan trọng nhất (xuất hiện tro
 *   [crawler.py](crawler.py): Module chịu trách nhiệm tải văn bản từ trang web nguồn.
 *   [deepseek_translate.py](deepseek_translate.py): Module kết nối API DeepSeek, xử lý Glossary (sliding window), Style Guide (multi-chapter sampling), và skip chapter lỗi.
 *   [build_epub.py](build_epub.py): Module đóng gói thành phẩm thành định dạng sách điện tử EPUB.
+*   [build_pdf.py](build_pdf.py): Module xuất PDF dự phòng (dùng `fpdf2`, tự dò font TTF hỗ trợ tiếng Việt trên hệ thống).
+*   [output_storage.py](output_storage.py): Xác định thư mục lưu tối ưu theo hệ điều hành (tuân thủ Android Scoped Storage), kích hoạt `termux-media-scan` để file mới hiện ngay trong app trên Android.
 *   [text_postprocess.py](text_postprocess.py): Module hậu xử lý, chuẩn hóa chính tả và làm sạch văn bản tiếng Việt sau dịch. Bao gồm `postprocess_title()` riêng cho tên chương.
 *   [setup_termux.sh](setup_termux.sh): Kịch bản tự động thiết lập ban đầu trên Termux.
 *   [run_termux.sh](run_termux.sh): Kịch bản bổ trợ khởi chạy nhanh / tích hợp Widget trên điện thoại Android.

@@ -7,7 +7,6 @@ import http.server
 import json
 import os
 import re
-import shutil
 import subprocess
 import threading
 import traceback
@@ -20,6 +19,7 @@ from build_epub import build_epub
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 call_deepseek, load_glossary, translate_chapter)
+from output_storage import save_output_file
 from text_postprocess import postprocess
 
 # Load env variables on startup
@@ -118,7 +118,7 @@ def test_translate_handler(chinese_text: str, api_key: str) -> dict:
 STATE = {
     "running": False,
     "log": "",
-    "epub": None,
+    "epub": None,           # co the la 1 path (EPUB) hoac chuoi liet ke ca EPUB + PDF
     "error": None,
     "step": "idle",          # "idle", "crawling", "translating", "packaging", "done"
     "current_chapter": 0,
@@ -591,6 +591,46 @@ PAGE = """<!doctype html>
             gap: 10px;
             margin: -10px 0 16px 0;
         }
+        .format-row {
+            display: flex;
+            gap: 8px;
+            margin: 6px 0 16px 0;
+            flex-wrap: wrap;
+        }
+        .format-opt {
+            flex: 1 1 auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: rgba(10, 12, 22, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin: 0;
+            min-width: 0;
+        }
+        .format-opt em {
+            color: var(--text-muted);
+            font-style: normal;
+            font-size: 11px;
+        }
+        .format-opt input[type="radio"] {
+            width: 16px;
+            height: 16px;
+            margin: 0;
+            accent-color: var(--accent-cyan);
+            flex-shrink: 0;
+        }
+        .format-opt:has(input:checked) {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 242, 254, 0.08);
+            box-shadow: 0 0 8px rgba(0, 242, 254, 0.15);
+        }
         .checkbox-group input[type="checkbox"] {
             min-width: 18px;
             min-height: 18px;
@@ -775,7 +815,23 @@ PAGE = """<!doctype html>
 
             <label>Tên truyện (để trống sẽ tự đoán từ URL):</label>
             <input name="title" placeholder="Ví dụ: Đệ Tam Trùng Nhân Cách">
-            
+
+            <label>Định dạng xuất:</label>
+            <div class="format-row">
+                <label class="format-opt">
+                    <input type="radio" name="formats" value="epub" checked>
+                    <span>EPUB <em>(khuyên dùng)</em></span>
+                </label>
+                <label class="format-opt">
+                    <input type="radio" name="formats" value="pdf">
+                    <span>PDF <em>(phòng hờ)</em></span>
+                </label>
+                <label class="format-opt">
+                    <input type="radio" name="formats" value="both">
+                    <span>Cả EPUB &amp; PDF</span>
+                </label>
+            </div>
+
             <details>
                 <summary>⚙️ Cấu hình nâng cao</summary>
                 <div class="advanced-grid">
@@ -1229,7 +1285,13 @@ PAGE = """<!doctype html>
                     : '';
 
                 if (s.epub) {
-                    resultEl.textContent = 'Thành công! File EPUB lưu tại: ' + s.epub;
+                    const lines = String(s.epub).split('\\n').filter(Boolean);
+                    if (lines.length > 1) {
+                        resultEl.innerHTML = 'Thành công! Các file đã lưu:<br>'
+                            + lines.map(l => '• <code>' + l.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) + '</code>').join('<br>');
+                    } else {
+                        resultEl.textContent = 'Thành công! File lưu tại: ' + s.epub;
+                    }
                     resultEl.className = 'result-box success';
                 } else if (s.error) {
                     resultEl.textContent = 'Lỗi: ' + s.error;
@@ -1260,9 +1322,6 @@ PAGE = """<!doctype html>
 </html>
 """
 
-# Thu muc Documents chung tren Android Termux de app doc sach de dang quet thay
-SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
-
 def force_kill_after_grace(proc, grace=5):
     """terminate() (SIGTERM) thuong du, nhung neu tien trinh khong thoat trong
     vai giay (vd ket noi mang treo o tang he dieu hanh) thi kill() (SIGKILL) de
@@ -1281,13 +1340,19 @@ def sanitize_filename(name: str) -> str:
     return name or "truyen"
 
 
-def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False):
+def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, formats="epub"):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
     # tren GUI dung im (giong "treo") hang chuc chuong roi moi hien 1 luc.
     import sys
-    args = [sys.executable, "-u", "pipeline.py", "--title", title]
+    if formats not in ("epub", "pdf", "both"):
+        formats = "epub"
+    args = [sys.executable, "-u", "pipeline.py", "--title", title, "--formats", formats,
+            # Web GUI tu di chuyen ket qua sau khi pipeline xong -> tat luu tu dong
+            # trong pipeline.py de tranh copy 2 lan (pipeline ghi thang vao Documents
+            # roi lam mat file goc, GUI khong tim thay khi copy lai).
+            "--no-to-documents"]
     if author:
         args += ["--author", author]
     args += ["--model", model]
@@ -1399,15 +1464,24 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
                 return
                 
             STATE["step"] = "done"
-            epub_path = f"{title}.epub"
-            if os.path.isdir(SHARED_DOCUMENTS):
+            # pipeline.py sinh EPUB va/hoac PDF trong CWD (co the ca hai neu formats=both).
+            # web_gui goi save_output_file() de di chuyen tung file sang thu muc user-visible
+            # (~/storage/shared/Documents/DichTruyen tren Termux, ~/Documents/DichTruyen tren PC).
+            # Da chan --no-to-documents ben run_pipeline nen pipeline khong copy trung.
+            candidate_files = [f"{title}.epub", f"{title}.pdf"]
+            saved_lines = []
+            for cand in candidate_files:
+                if not os.path.exists(cand):
+                    continue
                 try:
-                    shutil.copy(epub_path, SHARED_DOCUMENTS)
-                    STATE["epub"] = f"{epub_path} (da copy vao Documents)"
+                    final_path, warn = save_output_file(cand, move=True)
+                    if warn:
+                        saved_lines.append(f"{cand} (giu tam o day - {warn})")
+                    else:
+                        saved_lines.append(final_path)
                 except Exception as e:
-                    STATE["epub"] = f"{epub_path} (Loi copy: {str(e)})"
-            else:
-                STATE["epub"] = epub_path
+                    saved_lines.append(f"{cand} (Loi luu: {e})")
+            STATE["epub"] = "\n".join(saved_lines) if saved_lines else "(khong tim thay file dau ra)"
                 
     except Exception as e:
         with LOCK:
@@ -1550,14 +1624,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         allow_peak = "allow_peak" in params
         no_style_detect = "no_style_detect" in params
         no_thinking = "no_thinking" in params
-        
+        formats = params.get("formats", ["epub"])[0].strip() or "epub"
+        if formats not in ("epub", "pdf", "both"):
+            formats = "epub"
+
         with LOCK:
             already_running = STATE["running"]
-            
+
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, formats),
                 daemon=True
             ).start()
             

@@ -46,6 +46,23 @@ signal.signal(signal.SIGINT, _handle_sigterm)
 from build_epub import build_epub
 from crawler import DEFAULT_OUTPUT, crawl_novel
 from deepseek_translate import load_dotenv, translate_novel
+from output_storage import is_termux, save_output_file
+
+
+VALID_FORMATS = ("epub", "pdf", "both")
+
+
+def _parse_formats(raw: str) -> list[str]:
+    if raw == "both":
+        return ["epub", "pdf"]
+    if raw in ("epub", "pdf"):
+        return [raw]
+    # Cho phep truyen "epub,pdf" (giu tuong thich neu ai script quen)
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    for p in parts:
+        if p not in ("epub", "pdf"):
+            raise ValueError(f"Format khong ho tro: {p}. Chi cho: epub | pdf | both.")
+    return parts or ["epub"]
 
 
 def main():
@@ -58,6 +75,16 @@ def main():
     parser.add_argument("--title", required=True, help="Ten truyen (EPUB metadata + ten file EPUB)")
     parser.add_argument("--author", default="Unknown")
     parser.add_argument("--epub", default=None, help="Duong dan EPUB dau ra, mac dinh <title>.epub")
+    parser.add_argument("--pdf", default=None, help="Duong dan PDF dau ra, mac dinh <title>.pdf")
+    parser.add_argument("--formats", default="epub", choices=list(VALID_FORMATS),
+                         help="Dinh dang xuat: epub (mac dinh) | pdf | both. "
+                              "PDF chi la fallback cho Termux khi khong co reader EPUB.")
+    parser.add_argument("--to-documents", dest="to_documents", action="store_true", default=None,
+                         help="Sau khi tao xong, di chuyen san pham sang thu muc Documents "
+                              "user-visible (~/storage/shared/Documents/DichTruyen tren Termux, "
+                              "~/Documents/DichTruyen tren PC). Mac dinh: bat neu la Termux.")
+    parser.add_argument("--no-to-documents", dest="to_documents", action="store_false",
+                         help="Tat viec di chuyen tu dong sang Documents (giu file o thu muc hien tai).")
     parser.add_argument("--glossary", default="glossary.json")
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--temperature", type=float, default=1.3)
@@ -101,14 +128,41 @@ def main():
                      style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
                      should_stop=lambda: _stop_flag)
 
-    print("\n=== Buoc 3/3: Dong goi EPUB ===")
-    epub_path = args.epub or f"{args.title}.epub"
+    formats = _parse_formats(args.formats)
+    print(f"\n=== Buoc 3/3: Dong goi {'/'.join(f.upper() for f in formats)} ===")
     if failed:
-        print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB se KHONG day du.")
+        print(f"CANH BAO: Co {len(failed)} chuong dich that bai. San pham dau ra se KHONG day du.")
         for fc in failed:
             print(f"  - Chuong {fc['index']}: {fc['title']}")
-    build_epub(translated_file, epub_path, args.title, args.author)
-    print(f"\nHoan tat! EPUB: {epub_path}")
+
+    outputs = []
+    if "epub" in formats:
+        epub_path = args.epub or f"{args.title}.epub"
+        build_epub(translated_file, epub_path, args.title, args.author)
+        print(f"EPUB: {epub_path}")
+        outputs.append(epub_path)
+    if "pdf" in formats:
+        # Import muon: khong bat buoc fpdf2 phai co san neu user chi lay EPUB
+        from build_pdf import build_pdf
+        pdf_path = args.pdf or f"{args.title}.pdf"
+        try:
+            build_pdf(translated_file, pdf_path, args.title, args.author)
+            print(f"PDF: {pdf_path}")
+            outputs.append(pdf_path)
+        except Exception as e:
+            print(f"LOI xuat PDF: {e}")
+            # Khong sys.exit - EPUB (neu co) van dung; user chi mat PDF fallback
+
+    to_docs = args.to_documents if args.to_documents is not None else is_termux()
+    if to_docs and outputs:
+        print("\n=== Luu vao Documents user-visible ===")
+        for path in outputs:
+            final_path, warn = save_output_file(path)
+            if warn:
+                print(f"CANH BAO: {warn} -> giu tam o {final_path}")
+            else:
+                print(f"[LUU] {final_path}")
+    print("\nHoan tat!")
 
 
 if __name__ == "__main__":
