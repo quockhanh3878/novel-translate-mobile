@@ -854,7 +854,20 @@ PAGE = """<!doctype html>
                         <label>Độ sáng tạo (Temperature):</label>
                         <input type="number" name="temperature" step="0.1" min="0.0" max="2.0" value="1.3">
                     </div>
-                    
+
+                    <div class="col-span-2" style="background: rgba(0,242,254,0.04); border: 1px solid rgba(0,242,254,0.15); border-radius: 10px; padding: 12px 14px; margin-bottom:4px;">
+                        <div class="checkbox-group" style="margin-bottom:4px;">
+                            <input type="checkbox" name="stream_mode" id="stream_mode">
+                            <label for="stream_mode" style="display:inline;margin:0;font-weight:600;color:var(--accent-cyan);">⚡ Stream Mode: Cào xong chương nào, dịch ngay chương đó</label>
+                        </div>
+                        <p style="font-size:12px; color:var(--text-muted); margin: 4px 0 8px 16px;">Không cần chờ cào hết toàn bộ truyện. Phù hợp khi muốn đọc sớm.</p>
+                        <div id="stream-chapters-row" style="display:none; align-items:center; gap:10px; margin-left:16px;">
+                            <label style="margin:0; font-size:13px; white-space:nowrap;">Giới hạn số chương:</label>
+                            <input type="number" name="chapters" id="chapters_input" min="1" max="9999" value="20" style="margin:0; width:90px; flex:0 0 auto;">
+                            <span style="font-size:12px; color:var(--text-muted);">(0 = toàn bộ)</span>
+                        </div>
+                    </div>
+
                     <div class="col-span-2">
                         <div class="checkbox-group">
                             <input type="checkbox" name="allow_peak" id="allow_peak">
@@ -872,13 +885,37 @@ PAGE = """<!doctype html>
                 </div>
             </details>
             
+            <details>
+                <summary>💡 Hướng dẫn Termux & Khắc phục sự cố</summary>
+                <div style="padding: 16px; border-top: 1px solid rgba(255, 255, 255, 0.05); background: rgba(0, 0, 0, 0.15); font-size: 13px; line-height: 1.6; color: var(--text-main);">
+                    <div style="margin-bottom: 12px;">
+                        <strong style="color: var(--accent-cyan);">⏯️ Tự động khôi phục (Resume):</strong>
+                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Hệ thống hỗ trợ resume tự động. Nếu cào/dịch bị dừng giữa chừng (mất mạng, tắt app...), bạn chỉ cần nhập lại thông tin cũ và chạy lại, tiến trình sẽ tự động tiếp tục từ chương dang dở.</p>
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <strong style="color: var(--accent-cyan);">🔍 Kiểm tra tiến trình chạy ẩn:</strong>
+                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Mở cửa sổ Termux mới và nhập lệnh để kiểm tra xem Python có chạy ẩn không:</p>
+                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">ps -ef | grep python</code>
+                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Xem nhật ký log chương mới nhất:</p>
+                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">tail -n 20 ~/novel/pipeline_*.log</code>
+                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Tắt cưỡng bức tiến trình chạy ẩn:</p>
+                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">pkill -f python</code>
+                    </div>
+                    <div>
+                        <strong style="color: var(--accent-cyan);">📁 Vị trí lưu file & Lấy sách EPUB:</strong>
+                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Mọi file lưu trong thư mục <code style="color:#e2e8f0; font-family:monospace;">~/novel</code>. Để đưa file EPUB ra thư mục Download của điện thoại, nhập lệnh:</p>
+                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">cp ~/novel/*.epub /sdcard/Download/</code>
+                    </div>
+                </div>
+            </details>
+            
             <div class="btn-group">
                 <button type="submit" id="btn-start">Bắt đầu dịch</button>
                 <button type="button" id="btn-stop">Dừng lại</button>
             </div>
         </form>
         
-        <div class="steps">
+        <div class="steps" id="step-indicator">
             <div class="step" id="step-crawl">
                 <div class="step-dot">1</div>
                 Cào truyện
@@ -887,9 +924,9 @@ PAGE = """<!doctype html>
                 <div class="step-dot">2</div>
                 Dịch thuật
             </div>
-            <div class="step" id="step-package">
+            <div class="step" id="step-validate">
                 <div class="step-dot">3</div>
-                Đóng gói EPUB
+                Kiểm tra
             </div>
             <div class="step" id="step-done">
                 <div class="step-dot">✓</div>
@@ -1199,35 +1236,52 @@ PAGE = """<!doctype html>
             await fetch('/stop', { method: 'POST' });
         };
         
-        function updateSteps(currentStep) {
-            const steps = ['crawling', 'translating', 'packaging', 'done'];
-            const stepIds = {
-                'crawling': 'step-crawl',
-                'translating': 'step-translate',
-                'packaging': 'step-package',
-                'done': 'step-done'
-            };
-            
-            steps.forEach(s => {
-                const el = document.getElementById(stepIds[s]);
+        // Stream Mode toggle
+        const streamModeCheck = document.getElementById('stream_mode');
+        const streamChaptersRow = document.getElementById('stream-chapters-row');
+        streamModeCheck.onchange = () => {
+            streamChaptersRow.style.display = streamModeCheck.checked ? 'flex' : 'none';
+        };
+
+        function updateSteps(currentStep, isStream) {
+            const steps = isStream
+                ? ['streaming', 'streaming', 'validating', 'done']
+                : ['crawling', 'translating', 'validating', 'done'];
+            const stepIds = [
+                'step-crawl', 'step-translate', 'step-validate', 'step-done'
+            ];
+            const stateToIdx = isStream
+                ? { 'streaming': 0, 'validating': 2, 'packaging': 2, 'done': 3 }
+                : { 'crawling': 0, 'translating': 1, 'validating': 2, 'packaging': 2, 'done': 3 };
+
+            // Reset stream label
+            const crawlDot = document.querySelector('#step-crawl .step-dot');
+            const crawlLabel = document.querySelector('#step-crawl');
+            const translateDot = document.querySelector('#step-translate .step-dot');
+
+            if (isStream) {
+                document.querySelector('#step-crawl').lastChild.textContent = ' ⚡ Stream';
+                document.querySelector('#step-translate').lastChild.textContent = ' Cào+Dịch';
+            } else {
+                document.querySelector('#step-crawl').lastChild.textContent = ' Cào truyện';
+                document.querySelector('#step-translate').lastChild.textContent = ' Dịch thuật';
+            }
+
+            stepIds.forEach(id => {
+                const el = document.getElementById(id);
                 if (el) el.className = 'step';
             });
-            
+
             if (currentStep === 'idle') return;
-            
-            const activeIdx = steps.indexOf(currentStep);
-            
-            steps.forEach((s, idx) => {
-                const el = document.getElementById(stepIds[s]);
+
+            const activeIdx = stateToIdx[currentStep] ?? -1;
+            stepIds.forEach((id, idx) => {
+                const el = document.getElementById(id);
                 if (!el) return;
-                
-                if (idx < activeIdx) {
-                    el.className = 'step completed';
-                } else if (idx === activeIdx) {
-                    el.className = 'step active';
-                }
+                if (idx < activeIdx) el.className = 'step completed';
+                else if (idx === activeIdx) el.className = 'step active';
             });
-            
+
             if (currentStep === 'done') {
                 document.getElementById('step-done').className = 'step completed';
             }
@@ -1251,14 +1305,19 @@ PAGE = """<!doctype html>
                     logEl.scrollTop = logEl.scrollHeight;
                 }
                 
-                updateSteps(s.step);
+                updateSteps(s.step, s.stream_mode);
                 
-                if (s.running && (s.step === 'crawling' || s.step === 'translating')) {
+                if (s.running && (s.step === 'crawling' || s.step === 'translating' || s.step === 'streaming')) {
                     progressArea.style.display = 'block';
                     if (s.step === 'crawling') {
                         progressText.textContent = `Đang cào chương: ${s.current_chapter}`;
                         progressBar.style.width = '100%';
                         progressPercent.textContent = 'Đang tải...';
+                    } else if (s.step === 'streaming') {
+                        progressText.textContent = `⚡ Stream: đã cào+dịch ${s.current_chapter} chương` + (s.total_chapters > 0 ? `/${s.total_chapters}` : '');
+                        const pct = s.total_chapters > 0 ? Math.round(s.current_chapter / s.total_chapters * 100) : 50;
+                        progressBar.style.width = `${Math.min(pct,100)}%`;
+                        progressPercent.textContent = s.total_chapters > 0 ? `${pct}%` : 'Đang stream...';
                     } else if (s.step === 'translating') {
                         if (s.total_chapters > 0) {
                             const percent = Math.min(100, Math.round((s.current_chapter / s.total_chapters) * 100));
@@ -1340,7 +1399,7 @@ def sanitize_filename(name: str) -> str:
     return name or "truyen"
 
 
-def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, formats="epub"):
+def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, formats="epub", stream_mode=False, chapters=0):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
@@ -1364,6 +1423,10 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
         args += ["--no-style-detect"]
     if no_thinking:
         args += ["--no-thinking"]
+    if stream_mode:
+        args += ["--stream"]
+        if chapters > 0:
+            args += ["--chapters", str(chapters)]
 
     if input_val.startswith("http"):
         # File tho mac dinh cua pipeline.py la 1 ten CO DINH dung chung cho moi
@@ -1385,10 +1448,11 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
             epub=None,
             error=None,
             error_detail="",
-            step="crawling",
+            step="streaming" if stream_mode else "crawling",
             current_chapter=0,
-            total_chapters=0,
+            total_chapters=chapters if stream_mode and chapters > 0 else 0,
             stop_requested=False,
+            stream_mode=stream_mode,
             raw_file=raw_file,
             translated_file=translated_file
         )
@@ -1627,6 +1691,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         formats = params.get("formats", ["epub"])[0].strip() or "epub"
         if formats not in ("epub", "pdf", "both"):
             formats = "epub"
+        stream_mode = "stream_mode" in params
+
+        try:
+            chapters = int(params.get("chapters", ["0"])[0].strip())
+        except ValueError:
+            chapters = 0
 
         with LOCK:
             already_running = STATE["running"]
@@ -1634,9 +1704,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, formats),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, formats, stream_mode, chapters),
                 daemon=True
             ).start()
+
             
         self.send_response(204)
         self.end_headers()
