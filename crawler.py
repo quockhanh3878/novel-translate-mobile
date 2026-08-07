@@ -171,7 +171,76 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
     return saved
 
 
+def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 0,
+                           log=print, should_stop=None):
+    """Generator: cao tung chuong, ghi vao output_file, yield ngay dict chuong do de
+    caller co the dich luon ma khong can doi cao het. Dung cho stream pipeline.
+
+    max_chapters: gioi han so chuong can cao (0 = khong gioi han, cao toan bo truyen).
+    Yield: dict {'title': ..., 'paragraphs': [...]} sau moi chuong cao thanh cong.
+    """
+    match = re.match(r"(.*_)(\d+)(\.html)$", start_url)
+    if not match:
+        raise ValueError(f"start_url phai ket thuc bang _<so>.html. Nhan: {start_url}")
+
+    base_url, url_chapter_num, suffix = match.group(1), int(match.group(2)), match.group(3)
+    existing = count_chapters(output_file)
+    chapter_num = existing + 1 if existing else url_chapter_num
+    if existing:
+        log(f"Da co {existing} chuong, tiep tuc tu chuong {chapter_num}.")
+
+    consecutive_errors = 0
+    saved = 0
+    limit_info = f" (gioi han {max_chapters} chuong)" if max_chapters > 0 else ""
+    log(f"Bat dau cao tu chuong {chapter_num}{limit_info}...")
+
+    with open(output_file, "a", encoding="utf-8") as f:
+        if f.tell() == 0:
+            f.write("=== TRUYỆN ===\n\n")
+
+        while True:
+            if max_chapters > 0 and saved >= max_chapters:
+                log(f"Da cao du {max_chapters} chuong theo yeu cau.")
+                break
+
+            if should_stop and should_stop():
+                log("Da dung theo yeu cau.")
+                break
+
+            result = crawl_chapter(f"{base_url}{chapter_num}{suffix}", log=log)
+
+            if result is None:
+                log(f"Da cao xong {saved} chuong (het truyen).")
+                break
+
+            if result is False:
+                consecutive_errors += 1
+                if consecutive_errors > 3:
+                    log("Qua nhieu loi lien tiep. Dung lai.")
+                    break
+                log("Thu lai sau 5 giay...")
+                time.sleep(5)
+                continue
+
+            consecutive_errors = 0
+
+            f.write(f"=== {result['title']} ===\n\n")
+            for para in result['paragraphs']:
+                f.write(f"{para}\n\n")
+            f.write(CHAPTER_SEP)
+            f.flush()
+
+            log(f"[Cao] Chuong {chapter_num}: {result['title']}")
+            saved += 1
+            chapter_num += 1
+
+            yield result  # Giao ngay cho pipeline de dich
+
+            time.sleep(1)  # Polite crawling delay
+
+
 def main():
+
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except AttributeError:

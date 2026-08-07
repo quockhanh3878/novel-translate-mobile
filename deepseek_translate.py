@@ -52,6 +52,11 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 # Giu ten cu de tuong thich nguoc voi code/test da import truoc do.
 count_translated_chapters = count_chapters
 
+
+class InsufficientBalanceError(RuntimeError):
+    """Tai khoan DeepSeek het so du, khong the tiep tuc goi API."""
+    pass
+
 # Gio cao diem DeepSeek: gia gap doi 9h-12h va 14h-18h GIO BAC KINH (UTC+8) moi ngay.
 # Trung Quoc khong dung DST nen offset co dinh, khong can zoneinfo/tzdata.
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -114,6 +119,7 @@ Yeu cau bat buoc:
      "new_names": {{"ten_trung_moi": "ten_viet_co_dinh"}}}}
 
 Viec dich TIEU DE CHUONG:
+- Neu tieu de goc co chua so chuong (vi du: "第1章", "第01章", "第十一回"...), bat buoc phai giu lai va dich dong nhat sang tieng Viet theo dinh dang "Chương X: [Ten chuong]" (vi du: "Chương 1: Dai bien hoat nhan").
 - Tieu de chuong ngan gon (2-8 tu), mang tinh thanh ngu/ngu co, truc dac.
 - KHONG dich dai nhu cau van, KHONG them chu thich, KHONG viet hoa cau.
 - Uu tien cach dich goi am, ngan gon, de nho. VD: "一念永恒" -> "Nhat niem vinh hang",
@@ -224,6 +230,17 @@ def save_glossary_meta(glossary_path: str, meta: dict) -> None:
         json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
 
 
+def cleanup_glossary_meta(meta: dict, current_chapter: int, max_idle_chapters: int = 100) -> dict:
+    """Loai bo thuat ngu it dung (count=1) va khong xuat hien lau de nhe RAM."""
+    keys_to_delete = []
+    for zh, m in meta.items():
+        if m.get("count", 1) == 1 and (current_chapter - m.get("last_seen", current_chapter)) > max_idle_chapters:
+            keys_to_delete.append(zh)
+    for k in keys_to_delete:
+        del meta[k]
+    return meta
+
+
 def update_glossary_meta(meta: dict, new_names: dict, chapter_idx: int) -> dict:
     """Cap nhat metadata cho cac entry moi/da co."""
     for zh, vi in new_names.items():
@@ -290,11 +307,52 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
             resp = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=180)
             if resp.status_code == 200:
                 content = resp.json()["choices"][0]["message"]["content"]
-                return json.loads(content)
+                try:
+                    return json.loads(content)
+                except json.JSONDecodeError as e:
+                    import re
+                    try:
+                        # Regex fallback for malformed JSON
+                        result = {}
+                        title_match = re.search(r'"title"\s*:\s*"([^"]+)"', content)
+                        if title_match: result["title"] = title_match.group(1)
+                        
+                        para_match = re.search(r'"paragraphs"\s*:\s*\[(.*?)\]', content, re.DOTALL)
+                        if para_match:
+                            paras_str = para_match.group(1)
+                            paras = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', paras_str)
+                            result["paragraphs"] = [p.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\') for p in paras]
+                            
+                        nn_match = re.search(r'"new_names"\s*:\s*\{(.*?)\}', content, re.DOTALL)
+                        result["new_names"] = {}
+                        if nn_match:
+                            pairs = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', nn_match.group(1))
+                            for k, v in pairs: result["new_names"][k] = v
+                            
+                        if "paragraphs" in result and result["paragraphs"]:
+                            return result
+                        raise e
+                    except Exception:
+                        raise e
+            elif resp.status_code == 402:
+                # Het so du tai khoan - khong retry, phat ngay
+                try:
+                    err_body = resp.json()
+                    err_code = err_body.get("error", {}).get("code", "")
+                    err_msg = err_body.get("error", {}).get("message", "")
+                except Exception:
+                    err_code, err_msg = "", resp.text[:200]
+                raise InsufficientBalanceError(
+                    f"HET SO DU TAI KHOAN DEEPSEEK (HTTP 402). "
+                    f"Code: {err_code}. Msg: {err_msg}. "
+                    f"Vui long nap them token tai platform.deepseek.com."
+                )
             elif resp.status_code == 429 or resp.status_code >= 500:
                 last_err = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
             else:
                 resp.raise_for_status()
+        except InsufficientBalanceError:
+            raise  # Khong retry khi het so du
         except (requests.exceptions.RequestException, json.JSONDecodeError, KeyError) as e:
             last_err = e
         time.sleep(min(2 ** attempt, 30))
@@ -344,20 +402,23 @@ def translate_chapter(chapter: dict, glossary: dict, system_prompt: str, api_key
     # vi tinh theo token THUC TE sinh ra) de chua du reasoning cho chuong dai.
     result = call_deepseek(system_prompt, user_prompt, api_key, model, temperature,
                             thinking=thinking, max_tokens=131072, should_stop=should_stop)
-    title = postprocess_title(result["title"]) if result.get("title") else chapter["title"]
+    title = postprocess_title(result.get("title", "")) if result.get("title") else chapter["title"]
     paragraphs = [postprocess(p) for p in result.get("paragraphs", []) if p and p.strip()]
-    new_names = {
-        str(k).strip(): str(v).strip()
-        for k, v in (result.get("new_names") or {}).items()
-        if str(k).strip() and str(v).strip()
-    }
+    new_names = {}
+    if isinstance(result.get("new_names"), dict):
+        new_names = {
+            str(k).strip(): str(v).strip()
+            for k, v in result["new_names"].items()
+            if str(k).strip() and str(v).strip()
+        }
     return {"title": title, "paragraphs": paragraphs, "new_names": new_names}
 
 
 def translate_novel(input_file: str, output_file: str, glossary_path: str, api_key: str,
                      model: str = "deepseek-v4-flash", temperature: float = 1.3, workers: int = 1,
                      thinking: bool = True, style_detect: bool = True, log=print,
-                     on_chapter=None, should_stop=None, avoid_peak: bool = True) -> None:
+                     on_chapter=None, should_stop=None, avoid_peak: bool = True,
+                     on_balance_error=None) -> None:
     """Dich toan bo file da cao (input_file) sang output_file, resume duoc, tu cap nhat
     glossary_path khi phat hien ten moi. Dung chung cho CLI (main()), pipeline.py va GUI.
 
@@ -369,6 +430,8 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
         gio Bac Kinh, gia gap doi). Tu dong cho den khi het gio cao diem roi moi goi,
         kiem tra lai truoc MOI dot chuong (khong chi luc bat dau) vi 1 truyen dai co
         the dich xuyen qua luc bat dau/ket thuc gio cao diem.
+    on_balance_error: ham duoc goi khi phat hien het so du tai khoan. Dung de bao hieu
+        cho cac pipeline khac dung lai (trong multi-novel mode).
     """
     glossary = load_glossary(glossary_path)
     glossary_meta = load_glossary_meta(glossary_path)
@@ -397,6 +460,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
 
     style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
+    last_style_eval_idx = done
 
     if workers > 1:
         log(f"CANH BAO: workers={workers} - nhieu chapter dich song song co the lam mat nhat quan ten rieng.")
@@ -418,20 +482,45 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                 if avoid_peak and wait_until_offpeak(log=log, should_stop=should_stop):
                     stopped = True
                     break
+                
+                current_idx = done + batch_start + 1
+                if style_detect and current_idx - last_style_eval_idx >= 200:
+                    log(f"Đã qua {current_idx - last_style_eval_idx} chương, đang tái đánh giá văn phong cho arc mới...")
+                    recent_chapters = chapters[max(0, current_idx-30):current_idx+30]
+                    new_style = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop)
+                    if new_style:
+                        style_guide = new_style
+                        style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n"
+                        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
+                        log(f"Văn phong mới cập nhật: {style_guide}")
+                    last_style_eval_idx = current_idx
 
                 batch = pending[batch_start:batch_start + workers]
                 futures = [executor.submit(_work, ch, done + batch_start + offset + 1)
                            for offset, ch in enumerate(batch)]
+                batch_failed = False
                 for offset, (ch, fut) in enumerate(zip(batch, futures)):
                     idx = done + batch_start + offset + 1
                     try:
                         translated = fut.result()
+                    except InsufficientBalanceError as e:
+                        log(f"\n{'='*60}")
+                        log(f"[!!! HET SO DU API !!!] {e}")
+                        log(f"{'='*60}")
+                        if on_balance_error:
+                            on_balance_error(str(e))
+                        failed_chapters.append({"index": idx, "title": ch["title"], "error": str(e)})
+                        stopped = True
+                        batch_failed = True
+                        break
                     except Exception as e:
                         log(f"[{idx}/{len(chapters)}] LOI chapter '{ch['title']}': {type(e).__name__}: {e}")
                         failed_chapters.append({"index": idx, "title": ch["title"], "error": str(e)})
                         if on_chapter:
                             on_chapter(idx, len(chapters), None)
-                        continue
+                        batch_failed = True
+                        break  # Bao toan thu tu, khong xuat cac future sau
+
 
                     f_out.write(f"=== {translated['title']} ===\n\n")
                     for p in translated["paragraphs"]:
@@ -439,20 +528,31 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                     f_out.write(CHAPTER_SEP)
                     f_out.flush()
 
+                    actual_new_count = 0
                     if translated["new_names"]:
+                        actual_new_count = sum(1 for k in translated["new_names"] if k not in glossary)
                         glossary.update(translated["new_names"])
                         save_glossary(glossary_path, glossary)
                         glossary_meta = update_glossary_meta(glossary_meta, translated["new_names"], idx)
                         save_glossary_meta(glossary_path, glossary_meta)
 
                     log(f"[{idx}/{len(chapters)}] {ch['title']} -> {translated['title']}"
-                        + (f" (+{len(translated['new_names'])} ten moi)" if translated["new_names"] else ""))
+                        + (f" (+{actual_new_count} ten moi)" if actual_new_count > 0 else ""))
 
                     if on_chapter:
                         on_chapter(idx, len(chapters), translated)
+                
+                # Cleanup glossary meta
+                if not batch_failed:
+                    glossary_meta = cleanup_glossary_meta(glossary_meta, done + batch_start + len(batch))
+                    save_glossary_meta(glossary_path, glossary_meta)
 
                 if should_stop and should_stop():
                     log("Da dung theo yeu cau. Chay lai se tu tiep tuc tu day.")
+                    stopped = True
+                    break
+                if batch_failed:
+                    log("Phien dich tam dung do co chuong bi loi. De dam bao thu tu, vui long chay lai (Resume).")
                     stopped = True
                     break
 
@@ -466,7 +566,94 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
     return failed_chapters
 
 
+def translate_novel_stream(chapter_generator, output_file: str, glossary_path: str,
+                            api_key: str, model: str = "deepseek-v4-flash",
+                            temperature: float = 1.3, thinking: bool = True,
+                            style_guide: str = "", log=print,
+                            on_chapter=None, should_stop=None,
+                            on_balance_error=None) -> list[dict]:
+    """Dich tung chuong tu generator (crawl_chapters_stream) ngay lap tuc khi co du lieu.
+
+    Khac voi translate_novel (doc tu file co san), ham nay nhan chapter_generator -
+    mot generator yield dict chuong ngay sau khi crao. Dich xong tung chuong, ghi ket
+    qua vao output_file luon, khong doi den khi cao xong toan bo.
+
+    Ung dung: pipeline --stream --chapters X: cao X chuong roi dich luon tung chuong.
+    style_guide: truyen thang tu ket qua detect_style_guide neu da phan tich truoc do.
+    """
+    glossary = load_glossary(glossary_path)
+    glossary_meta = load_glossary_meta(glossary_path)
+    log(f"Da nap {len(glossary)} thuat ngu tu {glossary_path}.")
+
+    # Lay so chuong da dich truoc do de tinh idx tuong doi
+    from crawler import count_chapters as _count
+    already_done = _count(output_file)
+    log(f"Da dich {already_done} chuong truoc do, bat dau ghi tiep.")
+
+    style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
+    system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
+
+    failed_chapters: list[dict] = []
+    idx = already_done
+
+    with open(output_file, "a", encoding="utf-8") as f_out:
+        for chapter in chapter_generator:
+            if should_stop and should_stop():
+                log("Da dung theo yeu cau.")
+                break
+
+            idx += 1
+            filtered = filter_glossary(glossary, glossary_meta, idx)
+            try:
+                translated = translate_chapter(
+                    chapter, filtered, system_prompt, api_key, model,
+                    temperature, thinking=thinking, should_stop=should_stop
+                )
+            except InsufficientBalanceError as e:
+                log(f"\n{'='*60}")
+                log(f"[!!! HET SO DU API !!!] {e}")
+                log(f"{'='*60}")
+                if on_balance_error:
+                    on_balance_error(str(e))
+                failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                break
+            except Exception as e:
+                log(f"[{idx}] LOI dich '{chapter['title']}': {type(e).__name__}: {e}")
+                failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                continue
+
+            f_out.write(f"=== {translated['title']} ===\n\n")
+            for p in translated["paragraphs"]:
+                f_out.write(f"{p}\n\n")
+            f_out.write(CHAPTER_SEP)
+            f_out.flush()
+
+            actual_new_count = 0
+            if translated["new_names"]:
+                actual_new_count = sum(1 for k in translated["new_names"] if k not in glossary)
+                glossary.update(translated["new_names"])
+                save_glossary(glossary_path, glossary)
+                glossary_meta = update_glossary_meta(glossary_meta, translated["new_names"], idx)
+                save_glossary_meta(glossary_path, glossary_meta)
+
+            log(f"[{idx}] [Dich] {chapter['title']} -> {translated['title']}"
+                + (f" (+{actual_new_count} ten moi)" if actual_new_count > 0 else ""))
+
+            if on_chapter:
+                on_chapter(idx, None, translated)
+
+            # Cleanup meta moi 20 chuong
+            if idx % 20 == 0:
+                glossary_meta = cleanup_glossary_meta(glossary_meta, idx)
+                save_glossary_meta(glossary_path, glossary_meta)
+
+    if failed_chapters:
+        log(f"That bai {len(failed_chapters)} chuong trong luot stream nay.")
+    return failed_chapters
+
+
 def main():
+
     parser = argparse.ArgumentParser(description="Dich truyen da cao sang tieng Viet bang DeepSeek API")
     parser.add_argument("--input", default="truyen_de_tam_trung_nhan_cach.txt")
     parser.add_argument("--output", default="truyen_de_tam_trung_nhan_cach_viet_deepseek.txt")

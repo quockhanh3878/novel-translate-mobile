@@ -44,12 +44,13 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
-from crawler import DEFAULT_OUTPUT, crawl_novel
-from deepseek_translate import load_dotenv, translate_novel
+from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream
+from deepseek_translate import load_dotenv, translate_novel, translate_novel_stream, detect_style_guide
+from validator import validate_translation
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Dong goi EPUB")
+    parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Validate -> Dong goi EPUB")
     parser.add_argument("--start-url", default=None,
                          help="URL chuong 1 de cao (bo qua neu da co san --raw)")
     parser.add_argument("--raw", default=DEFAULT_OUTPUT, help="File luu noi dung tho da cao")
@@ -63,6 +64,11 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.3)
     parser.add_argument("--workers", type=int, default=1,
                          help="So chuong dich song song (>1 danh doi tinh nhat quan ten rieng lay toc do)")
+    parser.add_argument("--chapters", type=int, default=0,
+                         help="Gioi han so chuong can cao/dich (0 = toan bo truyen). Dung voi --stream.")
+    parser.add_argument("--stream", action="store_true",
+                         help="[MOI] Che do stream: cao tung chuong roi dich ngay lap tuc, "
+                              "khong cho den khi cao het. Nen dung kem --chapters X.")
     parser.add_argument("--no-style-detect", action="store_true")
     parser.add_argument("--no-thinking", action="store_true",
                          help="CANH BAO: tat thinking khien deepseek-v4-flash chi echo nguyen van "
@@ -86,8 +92,44 @@ def main():
         print(f"Error: thieu DEEPSEEK_API_KEY (dat trong {args.env_file}, bien moi truong, hoac --api-key).")
         sys.exit(1)
 
-    print("=== Buoc 1/3: Cao truyen ===")
-    if args.start_url:
+    print("=== Buoc 1/4: Cao truyen ===")
+    if args.stream and args.start_url:
+        # --- CHE DO STREAM: cao tung chuong va dich ngay ---
+        chapter_limit = args.chapters
+        limit_msg = f" ({chapter_limit} chuong dau)" if chapter_limit > 0 else " (toan bo)"
+        print(f"[STREAM MODE] Cao + Dich dong thoi{limit_msg}...")
+
+        # Phan tich van phong truoc (lay 1 chuong mau de goi style detect)
+        style_guide = ""
+        if not args.no_style_detect:
+            print("Dang lay mau van phong tu chuong dau...")
+            from crawler import crawl_chapter, guess_title
+            import re as _re
+            match = _re.match(r"(.*_)(\d+)(\.html)$", args.start_url)
+            if match:
+                sample_ch = crawl_chapter(args.start_url)
+                if sample_ch:
+                    style_guide = detect_style_guide([sample_ch], api_key, args.model,
+                                                      should_stop=lambda: _stop_flag)
+                    if style_guide:
+                        print(f"Van phong: {style_guide}")
+
+        chapter_gen = crawl_chapters_stream(
+            args.start_url, args.raw,
+            max_chapters=chapter_limit,
+            should_stop=lambda: _stop_flag
+        )
+
+        print("\n=== Buoc 2/4: Dich ngay theo tung chuong vua cao ===")
+        failed = translate_novel_stream(
+            chapter_gen, translated_file, args.glossary, api_key,
+            model=args.model, temperature=args.temperature,
+            thinking=not args.no_thinking,
+            style_guide=style_guide,
+            should_stop=lambda: _stop_flag
+        )
+
+    elif args.start_url:
         crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
     elif os.path.exists(args.raw):
         print(f"Bo qua cao - da co san {args.raw}.")
@@ -95,13 +137,19 @@ def main():
         print(f"Error: khong co --start-url va khong tim thay {args.raw}.")
         sys.exit(1)
 
-    print("\n=== Buoc 2/3: Dich bang DeepSeek API ===")
-    failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
-                     temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
-                     style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
-                     should_stop=lambda: _stop_flag)
+    if not args.stream:
+        print("\n=== Buoc 2/4: Dich bang DeepSeek API ===")
+        failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
+                         temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
+                         style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
+                         should_stop=lambda: _stop_flag)
 
-    print("\n=== Buoc 3/3: Dong goi EPUB ===")
+    print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
+    warnings = validate_translation(args.raw, translated_file)
+    if warnings:
+        print("\n[CANH BAO] Phat hien van de trong ban dich. Ban co the can kiem tra lai.")
+
+    print("\n=== Buoc 4/4: Dong goi EPUB ===")
     epub_path = args.epub or f"{args.title}.epub"
     if failed:
         print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB se KHONG day du.")
