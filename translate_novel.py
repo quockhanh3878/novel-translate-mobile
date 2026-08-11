@@ -159,14 +159,13 @@ def main():
     
     with open(output_file, "a", encoding="utf-8") as f_out:
         for idx, ch in enumerate(chapters, 1):
-            title = ch["title"]
-            
-            if title in translated_titles or "TRUYỆN" in title:
+            expected_title = f"Chương {idx}"
+            if expected_title in translated_titles or "TRUYỆN" in title:
                 print(f"[{idx}/{len(chapters)}] Skipping: {title} (already translated)")
                 continue
                 
             print(f"[{idx}/{len(chapters)}] Translating: {title}...")
-            translated_title = translate_paragraph(title, DEFAULT_GLOSSARY)
+            translated_title = expected_title
             
             f_out.write(f"=== {translated_title} ===\n\n")
             

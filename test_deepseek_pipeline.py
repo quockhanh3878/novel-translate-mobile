@@ -113,6 +113,26 @@ def demo():
     end2 = _peak_window_end(datetime(2026, 1, 1, 15, 0, tzinfo=BEIJING_TZ))
     assert (end2.hour, end2.minute) == (18, 0), end2
 
+    # Test detect_style_guide tra ve dict
+    from deepseek_translate import detect_style_guide
+    import deepseek_translate
+    
+    orig_call_deepseek = deepseek_translate.call_deepseek
+    def fake_call_deepseek(*args, **kwargs):
+        return {
+            "style_guide": "Tien hiep, van phong trang trong.",
+            "term_categories": "cong phap, tong mon, phap bao"
+        }
+    
+    deepseek_translate.call_deepseek = fake_call_deepseek
+    try:
+        style_data = detect_style_guide([{"title": "1", "paragraphs": ["a"]}], "fake_api_key", "fake_model")
+        assert isinstance(style_data, dict)
+        assert style_data["style_guide"] == "Tien hiep, van phong trang trong."
+        assert style_data["term_categories"] == "cong phap, tong mon, phap bao"
+    finally:
+        deepseek_translate.call_deepseek = orig_call_deepseek
+
     print("OK: parse/resume/epub-build hoat dong dung nhu ky vong.")
 
 

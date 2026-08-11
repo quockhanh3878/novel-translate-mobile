@@ -482,8 +482,8 @@ class AppGUI(tk.Tk):
                 zh_title = ch['title_zh']
                 self.log(f"Đang dịch chương {index}/{len(chapters_data)}: {zh_title}")
                 
-                # Translate title
-                vi_title = translate_paragraph(zh_title, glossary)
+                # Use sequential chapter number as title
+                vi_title = f"Chương {index}"
                 vi_paragraphs = []
                 
                 # Translate paragraphs in parallel

@@ -47,6 +47,26 @@ def _fix_stray_trailing_quote(text: str) -> str:
     return f"“{head}” {tail}"
 
 
+def _fix_missing_opening_quote(text: str) -> str:
+    """Nếu dấu ngoặc kép đầu tiên trong câu là dấu đóng, có thể câu bị khuyết dấu mở ở đầu."""
+    first_quote_idx = -1
+    first_quote_char = ''
+    for i, char in enumerate(text):
+        if char in _ANY_QUOTE:
+            first_quote_idx = i
+            first_quote_char = char
+            break
+            
+    if first_quote_idx != -1 and first_quote_char in _CLOSE_QUOTES:
+        if first_quote_char == '”':
+            return '“' + text
+        elif first_quote_char == '’':
+            return '‘' + text
+        elif first_quote_char == '"':
+            return '"' + text
+    return text
+
+
 def postprocess(text: str) -> str:
     """
     Hậu xử lý toàn diện: sửa lỗi dấu câu, khoảng trắng, viết hoa tiếng Việt,
@@ -54,11 +74,13 @@ def postprocess(text: str) -> str:
     """
     text = re.sub(r"[ \t]+", " ", text)
     text = _collapse_repeated_words(text)
-    text = re.sub(rf"^[\s,;.\-!?{_ANY_QUOTE}\']+", "", text)
+    text = re.sub(r"^[\s,;.\-!?]+", "", text)
+    text = _fix_missing_opening_quote(text)
     text = _fix_stray_trailing_quote(text)
     text = re.sub(r"\s+([,;.!?])", r"\1", text)
     text = re.sub(r",{2,}", ",", text)
-    text = re.sub(r"\.{2,}(?!\.)", ".", text)
+    text = re.sub(r"\.{4,}", "...", text)
+    text = re.sub(r"(?<!\.)\.\.(?!\.)", ".", text)
     text = re.sub(r"!{2,}", "!", text)
     text = re.sub(r"\?{2,}", "?", text)
     text = re.sub(r"\.,", ".", text)

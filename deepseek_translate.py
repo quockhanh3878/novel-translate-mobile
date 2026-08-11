@@ -106,8 +106,8 @@ Yeu cau bat buoc:
    tung chu mot cach may moc, khong Han-Viet hoa nhung cho khong can thiet.
 2. Dung CHINH XAC ban thuat ngu (glossary) duoc cung cap cho ten nhan vat/dia danh/
    thuat ngu rieng, ap dung xuyen suot de dam bao tinh nhat quan giua cac chuong.
-3. Neu gap ten nhan vat/dia danh/thuat ngu rieng CHUA co trong glossary, hay CHON MOT
-   CACH DICH CO DINH duy nhat cho no va liet ke vao truong "new_names" de dung lai
+3. Neu gap ten nhan vat/dia danh, va {term_categories} CHUA co trong glossary, hay CHON MOT
+   CACH DICH CO DINH duy nhat cho no va liet ke vao truong "new_terms" de dung lai
    cho cac chuong sau - khong duoc dich cung mot ten theo nhieu cach khac nhau.
 4. Giu nguyen so luong doan van dung bang so luong trong "paragraphs" dau vao,
    KHONG gop, KHONG tach, KHONG bo sot doan nao.
@@ -116,7 +116,7 @@ Yeu cau bat buoc:
    KHONG dung the HTML - vi ban dich se duoc dong goi thang vao EPUB.
 7. Tra loi DUY NHAT bang JSON hop le theo dung schema:
    {{"title": "tieu de da dich", "paragraphs": ["doan 1 da dich", ...],
-     "new_names": {{"ten_trung_moi": "ten_viet_co_dinh"}}}}
+     "new_terms": {{"tu_trung_moi": "tu_viet_co_dinh"}}}}
 
 Viec dich TIEU DE CHUONG:
 - Neu tieu de goc co chua so chuong (vi du: "第1章", "第01章", "第十一回"...), bat buoc phai giu lai va dich dong nhat sang tieng Viet theo dinh dang "Chương X: [Ten chuong]" (vi du: "Chương 1: Dai bien hoat nhan").
@@ -137,8 +137,10 @@ khau ngu, cach xung ho giua cac nhan vat.
 Quan trong: phai tong hop tu nhieu mau o nhieu vung khac nhau trong truyen, khong chi
 danh gia tren 1 chuong duy nhat. Neu phong cach thay doi giua cac vung, hay uu tien
 phong cach CHUNG (xuat hien nhieu nhat) va ghi ro su thay doi neu co.
-Tra loi DUY NHAT bang JSON: {"style_guide": "mo ta ngan gon 3-6 cau, bao gom the loai,
-giong van, muc do trang trong/khau ngu, cach xung ho, va phan tich tu nhieu vung truyen"}
+Tra loi DUY NHAT bang JSON: {
+  "style_guide": "mo ta ngan gon 3-6 cau, bao gom the loai, giong van, muc do trang trong/khau ngu, cach xung ho, va phan tich tu nhieu vung truyen",
+  "term_categories": "Liet ke cac loai thuat ngu dac trung cua the loai nay (vi du Tien hiep thi la: cong phap, tong mon, canh gioi, phap bao. Do thi thi la: chuc vu, cong ty, thuong hieu. V.v.) cung voi thanh ngu, tuc ngu."
+}
 """
 
 
@@ -286,7 +288,7 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
         "response_format": {"type": "json_object"},
         # QUAN TRONG: da kiem chung thuc te - voi response_format=json_object, neu tat
         # thinking thi deepseek-v4-flash chi ECHO nguyen van doan Trung vao truong
-        # "paragraphs" thay vi dich (0% dich duoc), du system prompt yeu cau dich ro
+        # "paragraphs" thay vi dich (0% dich duoc), do system prompt yeu cau dich ro
         # rang. Bat thinking thi dich dung binh thuong (co reasoning_content chung
         # minh model thuc su suy luan dich tung cau). Vi vay mac dinh LUON bat thinking
         # cho cuoc goi dich chuong - --no-thinking chi de danh khi API/model doi hanh vi.
@@ -323,11 +325,11 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
                             paras = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', paras_str)
                             result["paragraphs"] = [p.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\') for p in paras]
                             
-                        nn_match = re.search(r'"new_names"\s*:\s*\{(.*?)\}', content, re.DOTALL)
-                        result["new_names"] = {}
+                        nn_match = re.search(r'"(?:new_names|new_terms)"\s*:\s*\{(.*?)\}', content, re.DOTALL)
+                        result["new_terms"] = {}
                         if nn_match:
                             pairs = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', nn_match.group(1))
-                            for k, v in pairs: result["new_names"][k] = v
+                            for k, v in pairs: result["new_terms"][k] = v
                             
                         if "paragraphs" in result and result["paragraphs"]:
                             return result
@@ -360,11 +362,11 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
 
 
 def detect_style_guide(chapters: list[dict], api_key: str, model: str,
-                       should_stop=None) -> str:
+                       should_stop=None) -> dict:
     """Phan tich van phong tu nhieu chuong nhau trong truyen."""
     sampled = sample_for_style(chapters)
     if not sampled:
-        return ""
+        return {}
     parts = []
     for i, ch in enumerate(sampled):
         label = f"Chuong {i + 1}" + (f" ({ch['title']})" if ch.get("title") else "")
@@ -375,9 +377,9 @@ def detect_style_guide(chapters: list[dict], api_key: str, model: str,
         data = call_deepseek(STYLE_SYSTEM_PROMPT, user_prompt, api_key, model, temperature=1.0,
                               max_retries=3, thinking=True, max_tokens=8192,
                               should_stop=should_stop)
-        return data.get("style_guide", "").strip()
+        return data
     except RuntimeError:
-        return ""
+        return {}
 
 
 def build_user_prompt(chapter: dict, glossary: dict) -> str:
@@ -393,7 +395,7 @@ def build_user_prompt(chapter: dict, glossary: dict) -> str:
 
 def translate_chapter(chapter: dict, glossary: dict, system_prompt: str, api_key: str,
                        model: str, temperature: float, thinking: bool = True,
-                       should_stop=None) -> dict:
+                       should_stop=None, chapter_idx: int | None = None) -> dict:
     user_prompt = build_user_prompt(chapter, glossary)
     # max_tokens la tran chung cho CA reasoning_content LAN content khi thinking bat -
     # da kiem chung thuc te: voi 16384, 1 chuong ~70 doan bi reasoning "an" het tran
@@ -402,16 +404,20 @@ def translate_chapter(chapter: dict, glossary: dict, system_prompt: str, api_key
     # vi tinh theo token THUC TE sinh ra) de chua du reasoning cho chuong dai.
     result = call_deepseek(system_prompt, user_prompt, api_key, model, temperature,
                             thinking=thinking, max_tokens=131072, should_stop=should_stop)
-    title = postprocess_title(result.get("title", "")) if result.get("title") else chapter["title"]
+    if chapter_idx is not None:
+        title = f"Chương {chapter_idx}"
+    else:
+        title = postprocess_title(result.get("title", "")) if result.get("title") else chapter["title"]
     paragraphs = [postprocess(p) for p in result.get("paragraphs", []) if p and p.strip()]
-    new_names = {}
-    if isinstance(result.get("new_names"), dict):
-        new_names = {
+    new_terms = {}
+    extracted_terms = result.get("new_terms") or result.get("new_names") or {}
+    if isinstance(extracted_terms, dict):
+        new_terms = {
             str(k).strip(): str(v).strip()
-            for k, v in result["new_names"].items()
+            for k, v in extracted_terms.items()
             if str(k).strip() and str(v).strip()
         }
-    return {"title": title, "paragraphs": paragraphs, "new_names": new_names}
+    return {"title": title, "paragraphs": paragraphs, "new_terms": new_terms}
 
 
 def translate_novel(input_file: str, output_file: str, glossary_path: str, api_key: str,
@@ -453,13 +459,47 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
         return
 
     style_guide = ""
+    term_categories = "các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ"
+    style_file = output_file.rsplit('.', 1)[0] + "_style.txt" if '.' in output_file else output_file + "_style.txt"
+
     if style_detect:
-        log("Dang phan tich van phong tu nhieu chuong (dau/giua/cuoi)...")
-        style_guide = detect_style_guide(chapters, api_key, model, should_stop=should_stop)
-        log(f"Van phong xac dinh: {style_guide or '(khong xac dinh duoc, dung mac dinh)'}")
+        if os.path.exists(style_file):
+            try:
+                with open(style_file, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content.startswith("{"):
+                    try:
+                        style_data = json.loads(content)
+                        style_guide = style_data.get("style_guide", "")
+                        term_categories = style_data.get("term_categories", term_categories)
+                    except Exception:
+                        style_guide = content
+                else:
+                    style_guide = content
+                log(f"Đã nạp văn phong từ {style_file}")
+            except Exception as e:
+                log(f"Lỗi khi đọc file văn phong: {e}")
+
+        if not style_guide:
+            log("Dang phan tich van phong tu nhieu chuong (dau/giua/cuoi)...")
+            style_data = detect_style_guide(chapters, api_key, model, should_stop=should_stop)
+            if isinstance(style_data, dict):
+                style_guide = style_data.get("style_guide", "").strip()
+                term_categories = style_data.get("term_categories", term_categories).strip()
+            elif isinstance(style_data, str):
+                style_guide = style_data.strip()
+
+            log(f"Van phong xac dinh: {style_guide or '(khong xac dinh duoc, dung mac dinh)'}")
+            if style_guide:
+                try:
+                    with open(style_file, "w", encoding="utf-8") as f:
+                        json.dump({"style_guide": style_guide, "term_categories": term_categories}, f, ensure_ascii=False, indent=2)
+                    log(f"Đã lưu văn phong vào {style_file}")
+                except Exception as e:
+                    log(f"Lỗi khi lưu file văn phong: {e}")
 
     style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
-    system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
+    system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block, term_categories=term_categories)
     last_style_eval_idx = done
 
     if workers > 1:
@@ -468,7 +508,8 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
     def _work(ch, chapter_idx):
         filtered = filter_glossary(glossary, glossary_meta, chapter_idx)
         return translate_chapter(ch, filtered, system_prompt, api_key, model,
-                                  temperature, thinking=thinking, should_stop=should_stop)
+                                  temperature, thinking=thinking, should_stop=should_stop,
+                                  chapter_idx=chapter_idx)
 
     # Nop theo tung dot toi da `workers` chuong (khong dung executor.map()): map() nop
     # HET pending ngay lap tuc bat ke so worker, nen bam "Dung" van khong ngan duoc cac
@@ -487,12 +528,21 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                 if style_detect and current_idx - last_style_eval_idx >= 200:
                     log(f"Đã qua {current_idx - last_style_eval_idx} chương, đang tái đánh giá văn phong cho arc mới...")
                     recent_chapters = chapters[max(0, current_idx-30):current_idx+30]
-                    new_style = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop)
+                    style_data = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop)
+                    new_style = style_data.get("style_guide", "").strip() if isinstance(style_data, dict) else (style_data.strip() if isinstance(style_data, str) else "")
+                    new_term_cats = style_data.get("term_categories", "").strip() if isinstance(style_data, dict) else ""
                     if new_style:
                         style_guide = new_style
+                        if new_term_cats:
+                            term_categories = new_term_cats
                         style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n"
-                        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block)
+                        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block=style_block, term_categories=term_categories)
                         log(f"Văn phong mới cập nhật: {style_guide}")
+                        try:
+                            with open(style_file, "w", encoding="utf-8") as f:
+                                json.dump({"style_guide": style_guide, "term_categories": term_categories}, f, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
                     last_style_eval_idx = current_idx
 
                 batch = pending[batch_start:batch_start + workers]
@@ -529,15 +579,15 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                     f_out.flush()
 
                     actual_new_count = 0
-                    if translated["new_names"]:
-                        actual_new_count = sum(1 for k in translated["new_names"] if k not in glossary)
-                        glossary.update(translated["new_names"])
+                    if translated["new_terms"]:
+                        actual_new_count = sum(1 for k in translated["new_terms"] if k not in glossary)
+                        glossary.update(translated["new_terms"])
                         save_glossary(glossary_path, glossary)
-                        glossary_meta = update_glossary_meta(glossary_meta, translated["new_names"], idx)
+                        glossary_meta = update_glossary_meta(glossary_meta, translated["new_terms"], idx)
                         save_glossary_meta(glossary_path, glossary_meta)
 
                     log(f"[{idx}/{len(chapters)}] {ch['title']} -> {translated['title']}"
-                        + (f" (+{actual_new_count} ten moi)" if actual_new_count > 0 else ""))
+                        + (f" (+{actual_new_count} thuat ngu moi)" if actual_new_count > 0 else ""))
 
                     if on_chapter:
                         on_chapter(idx, len(chapters), translated)
@@ -571,7 +621,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                             temperature: float = 1.3, thinking: bool = True,
                             style_guide: str = "", log=print,
                             on_chapter=None, should_stop=None,
-                            on_balance_error=None) -> list[dict]:
+                            on_balance_error=None, term_categories: str = "các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ") -> list[dict]:
     """Dich tung chuong tu generator (crawl_chapters_stream) ngay lap tuc khi co du lieu.
 
     Khac voi translate_novel (doc tu file co san), ham nay nhan chapter_generator -
@@ -607,7 +657,8 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
             try:
                 translated = translate_chapter(
                     chapter, filtered, system_prompt, api_key, model,
-                    temperature, thinking=thinking, should_stop=should_stop
+                    temperature, thinking=thinking, should_stop=should_stop,
+                    chapter_idx=idx
                 )
             except InsufficientBalanceError as e:
                 log(f"\n{'='*60}")
@@ -629,15 +680,15 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
             f_out.flush()
 
             actual_new_count = 0
-            if translated["new_names"]:
-                actual_new_count = sum(1 for k in translated["new_names"] if k not in glossary)
-                glossary.update(translated["new_names"])
+            if translated["new_terms"]:
+                actual_new_count = sum(1 for k in translated["new_terms"] if k not in glossary)
+                glossary.update(translated["new_terms"])
                 save_glossary(glossary_path, glossary)
-                glossary_meta = update_glossary_meta(glossary_meta, translated["new_names"], idx)
+                glossary_meta = update_glossary_meta(glossary_meta, translated["new_terms"], idx)
                 save_glossary_meta(glossary_path, glossary_meta)
 
             log(f"[{idx}] [Dich] {chapter['title']} -> {translated['title']}"
-                + (f" (+{actual_new_count} ten moi)" if actual_new_count > 0 else ""))
+                + (f" (+{actual_new_count} thuat ngu moi)" if actual_new_count > 0 else ""))
 
             if on_chapter:
                 on_chapter(idx, None, translated)

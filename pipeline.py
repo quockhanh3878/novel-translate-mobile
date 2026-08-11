@@ -101,18 +101,53 @@ def main():
 
         # Phan tich van phong truoc (lay 1 chuong mau de goi style detect)
         style_guide = ""
+        term_categories = "các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ"
+        style_file = translated_file.rsplit('.', 1)[0] + "_style.txt" if '.' in translated_file else translated_file + "_style.txt"
+
         if not args.no_style_detect:
-            print("Dang lay mau van phong tu chuong dau...")
-            from crawler import crawl_chapter, guess_title
-            import re as _re
-            match = _re.match(r"(.*_)(\d+)(\.html)$", args.start_url)
-            if match:
-                sample_ch = crawl_chapter(args.start_url)
-                if sample_ch:
-                    style_guide = detect_style_guide([sample_ch], api_key, args.model,
-                                                      should_stop=lambda: _stop_flag)
-                    if style_guide:
-                        print(f"Van phong: {style_guide}")
+            if os.path.exists(style_file):
+                try:
+                    with open(style_file, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content.startswith("{"):
+                        try:
+                            import json
+                            style_data = json.loads(content)
+                            style_guide = style_data.get("style_guide", "")
+                            term_categories = style_data.get("term_categories", term_categories)
+                        except Exception:
+                            style_guide = content
+                    else:
+                        style_guide = content
+                    print(f"Đã nạp văn phong từ {style_file}")
+                except Exception as e:
+                    print(f"Lỗi khi đọc file văn phong: {e}")
+
+            if not style_guide:
+                print("Dang lay mau van phong tu chuong dau...")
+                from crawler import crawl_chapter, guess_title
+                import re as _re
+                match = _re.match(r"(.*_)(\d+)(\.html)$", args.start_url)
+                if match:
+                    sample_ch = crawl_chapter(args.start_url)
+                    if sample_ch:
+                        style_data = detect_style_guide([sample_ch], api_key, args.model,
+                                                          should_stop=lambda: _stop_flag)
+                        if isinstance(style_data, dict):
+                            style_guide = style_data.get("style_guide", "").strip()
+                            term_categories = style_data.get("term_categories", term_categories).strip()
+                        elif isinstance(style_data, str):
+                            style_guide = style_data.strip()
+                            
+                        if style_guide:
+                            print(f"Van phong: {style_guide}")
+                            try:
+                                import json
+                                with open(style_file, "w", encoding="utf-8") as f:
+                                    json.dump({"style_guide": style_guide, "term_categories": term_categories}, f, ensure_ascii=False, indent=2)
+                                print(f"Đã lưu văn phong vào {style_file}")
+                            except Exception as e:
+                                print(f"Lỗi khi lưu file văn phong: {e}")
 
         chapter_gen = crawl_chapters_stream(
             args.start_url, args.raw,
@@ -126,7 +161,8 @@ def main():
             model=args.model, temperature=args.temperature,
             thinking=not args.no_thinking,
             style_guide=style_guide,
-            should_stop=lambda: _stop_flag
+            should_stop=lambda: _stop_flag,
+            term_categories=term_categories
         )
 
     elif args.start_url:
