@@ -34,7 +34,7 @@ curl -sOL https://raw.githubusercontent.com/quockhanh3878/novel-translate-mobile
 
 ### 2. Cập nhật phiên bản mới (Update)
 ```bash
-cd ~/novel && git pull && pip install -r requirements.txt
+cd ~/novel && git fetch origin && git reset --hard origin/main && pip install -r requirements.txt
 ```
 *Sau khi cập nhật:* Tắt hoàn toàn Termux rồi mở lại để khởi động lại Web GUI.
 
@@ -83,7 +83,8 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 
 ### 2. Cập nhật
 ```bash
-git pull && pip install -r requirements.txt
+git fetch origin && git reset --hard origin/main
+pip install -r requirements.txt
 ```
 
 ### 3. Cách chạy
