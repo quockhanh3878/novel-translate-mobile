@@ -115,9 +115,10 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
     chung), TU DONG tiep tuc tu chuong N+1 bat ke so chuong ghi trong start_url - chi
     dung start_url de suy ra mau URL (base_url/suffix), khong dung de xac dinh diem
     bat dau, tranh cao trung lap khi resume. Tra ve so chuong cao them trong lan nay."""
-    match = re.match(r"(.*_)(\d+)(\.html)$", start_url)
+    start_url = start_url.strip().rstrip('.')
+    match = re.match(r"(.*_)(\d+)(\.html?)$", start_url)
     if not match:
-        raise ValueError(f"start_url phai ket thuc bang _<so>.html, vi du '..._1.html'. Nhan: {start_url}")
+        raise ValueError(f"start_url phai ket thuc bang _<so>.html hoac .htm, vi du '..._1.html'. Nhan: '{start_url}'")
 
     base_url, url_chapter_num, suffix = match.group(1), int(match.group(2)), match.group(3)
     existing = count_chapters(output_file)
@@ -179,9 +180,10 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
     max_chapters: gioi han so chuong can cao (0 = khong gioi han, cao toan bo truyen).
     Yield: dict {'title': ..., 'paragraphs': [...]} sau moi chuong cao thanh cong.
     """
-    match = re.match(r"(.*_)(\d+)(\.html)$", start_url)
+    start_url = start_url.strip().rstrip('.')
+    match = re.match(r"(.*_)(\d+)(\.html?)$", start_url)
     if not match:
-        raise ValueError(f"start_url phai ket thuc bang _<so>.html. Nhan: {start_url}")
+        raise ValueError(f"start_url phai ket thuc bang _<so>.html hoac .htm. Nhan: '{start_url}'")
 
     base_url, url_chapter_num, suffix = match.group(1), int(match.group(2)), match.group(3)
     existing = count_chapters(output_file)
