@@ -34,9 +34,9 @@ curl -sOL https://raw.githubusercontent.com/quockhanh3878/novel-translate-mobile
 
 ### 2. Cập nhật phiên bản mới (Update)
 ```bash
-cd ~/novel && git fetch origin && git reset --hard origin/main && pip install -r requirements.txt
+cd ~/novel && bash update_termux.sh
 ```
-*Sau khi cập nhật:* Tắt hoàn toàn Termux rồi mở lại để khởi động lại Web GUI.
+*(Script sẽ tự động diệt tiến trình cũ, cập nhật code và tự mở lại trình duyệt phiên bản mới nhất)*
 
 ### 3. Khởi chạy thủ công
 ```bash
