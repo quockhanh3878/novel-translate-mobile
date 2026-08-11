@@ -58,6 +58,12 @@ Sau đó truy cập: [http://localhost:8000](http://localhost:8000)
   cp ~/novel/*.epub /sdcard/Download/
   ```
 
+### 5. Khắc phục lỗi Termux bị đóng đột ngột (Killed in background)
+Khi chờ hết giờ cao điểm hoặc dịch truyện quá dài, Android có thể tự động giết Termux để tiết kiệm pin hoặc giải phóng RAM. Hãy thiết lập 3 bước sau:
+1. **Tắt tối ưu pin (Bắt buộc):** Vào Cài đặt máy > Ứng dụng > Termux > Pin > Đổi thành **Không hạn chế (Unrestricted)**.
+2. **Khoá ứng dụng (Lock App):** Mở giao diện đa nhiệm (Recent Apps), ấn giữ vào Termux và chọn biểu tượng Ổ khoá.
+3. **Mở dạng Cửa sổ nổi (Floating Window) hoặc Chia đôi màn hình:** Giúp hệ thống ghi nhận Termux đang hiển thị, tránh bị "Phantom Process Killer" của Android 12+ dọn dẹp.
+
 ---
 
 ## 💻 Hướng dẫn trên máy tính (PC)
