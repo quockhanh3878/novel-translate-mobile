@@ -109,6 +109,13 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
 
         # Buoc 2: Dich
         log("=== Buoc 2/4: Dich bang DeepSeek API ===")
+        
+        def _on_chapter_multi(idx, total, translated):
+            try:
+                build_epub(translated_file, epub_path, title, author)
+            except Exception as e:
+                log(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+
         failed = translate_novel(
             raw_file, translated_file, glossary, api_key,
             model=model, temperature=temperature, workers=workers,
@@ -116,6 +123,7 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
             avoid_peak=avoid_peak, log=log,
             should_stop=should_stop,
             on_balance_error=on_balance_error,
+            on_chapter=_on_chapter_multi
         )
         result_slot["failed"] = failed or []
 

@@ -116,15 +116,20 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
 
 def main():
     parser = argparse.ArgumentParser(description="Dong goi file truyen da dich thanh EPUB tieng Viet")
-    parser.add_argument("--input", default="truyen_de_tam_trung_nhan_cach_viet_deepseek.txt")
+    parser.add_argument("--input", required=True, help="Duong dan den file txt (vi du: truyen_viet.txt)")
     parser.add_argument("--output", default=None, help="Mac dinh: <title>.epub")
-    parser.add_argument("--title", default="Đệ Tam Trùng Nhân Cách")
-    parser.add_argument("--author", default="Thường Thư Hân")
+    parser.add_argument("--title", default=None, help="Ten truyen (neu khong nhap se tu doan tu ten file)")
+    parser.add_argument("--author", default="Unknown", help="Ten tac gia")
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
         print(f"Error: khong tim thay file input {args.input}.")
         return
+
+    # Tu doan ten truyen tu ten file neu khong duoc cung cap
+    if not args.title:
+        from crawler import guess_title
+        args.title = guess_title(args.input)
 
     output_file = args.output or f"{args.title}.epub"
     path = build_epub(args.input, output_file, args.title, args.author)

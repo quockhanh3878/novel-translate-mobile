@@ -84,13 +84,28 @@ def main():
     except AttributeError:
         pass
 
-    translated_file = args.translated or f"{args.raw}.viet.txt"
 
     load_dotenv(args.env_file)
     api_key = args.api_key or os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         print(f"Error: thieu DEEPSEEK_API_KEY (dat trong {args.env_file}, bien moi truong, hoac --api-key).")
         sys.exit(1)
+
+    translated_file = args.translated or f"{args.raw}.viet.txt"
+    epub_path = args.epub or f"{args.title}.epub"
+
+    # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB ngay luon
+    # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi.
+    if os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
+        from crawler import count_chapters as _count_vi
+        existing_count = _count_vi(translated_file)
+        if existing_count > 0:
+            print(f"[EPUB] Phat hien {existing_count} chuong da dich co san, dang dong goi EPUB nguon...")
+            try:
+                build_epub(translated_file, epub_path, args.title, args.author)
+                print(f"[EPUB] Da dong goi {existing_count} chuong vao: {epub_path}")
+            except Exception as e:
+                print(f"[EPUB] Loi khi dong goi ban cu: {e}")
 
     print("=== Buoc 1/4: Cao truyen ===")
     if args.stream and args.start_url:
@@ -156,13 +171,20 @@ def main():
         )
 
         print("\n=== Buoc 2/4: Dich ngay theo tung chuong vua cao ===")
+        def _on_chapter_stream(idx, title, translated):
+            try:
+                build_epub(translated_file, epub_path, args.title, args.author)
+            except Exception as e:
+                print(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+
         failed = translate_novel_stream(
             chapter_gen, translated_file, args.glossary, api_key,
             model=args.model, temperature=args.temperature,
             thinking=not args.no_thinking,
             style_guide=style_guide,
             should_stop=lambda: _stop_flag,
-            term_categories=term_categories
+            term_categories=term_categories,
+            on_chapter=_on_chapter_stream
         )
 
     elif args.start_url:
@@ -175,10 +197,16 @@ def main():
 
     if not args.stream:
         print("\n=== Buoc 2/4: Dich bang DeepSeek API ===")
+        def _on_chapter_batch(idx, total, translated):
+            try:
+                build_epub(translated_file, epub_path, args.title, args.author)
+            except Exception as e:
+                print(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+                
         failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
                          temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
                          style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
-                         should_stop=lambda: _stop_flag)
+                         should_stop=lambda: _stop_flag, on_chapter=_on_chapter_batch)
 
     print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
     warnings = validate_translation(args.raw, translated_file)
@@ -186,7 +214,6 @@ def main():
         print("\n[CANH BAO] Phat hien van de trong ban dich. Ban co the can kiem tra lai.")
 
     print("\n=== Buoc 4/4: Dong goi EPUB ===")
-    epub_path = args.epub or f"{args.title}.epub"
     if failed:
         print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB se KHONG day du.")
         for fc in failed:

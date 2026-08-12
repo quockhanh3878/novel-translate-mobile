@@ -327,10 +327,20 @@ class AppGUI(tk.Tk):
             already_vi = count_chapters(translated_file)
             self.log(f"\n=== Bước 2/3: Dịch bằng DeepSeek API (đã dịch {already_vi} chương) ===")
             self.lbl_status.config(text="Bước 2/3: Đang dịch...")
+            
+            epub_path = os.path.join(save_dir, f"{title}.epub")
+            def _on_chapter_gui(idx, total, translated):
+                self.on_chapter_progress(idx, total, translated)
+                try:
+                    from build_epub import build_epub
+                    build_epub(translated_file, epub_path, title, author)
+                except Exception as e:
+                    self.log(f"  [Lỗi EPUB] Không thể đóng gói EPUB chương {idx}: {e}")
+
             translate_novel(
                 raw_file, translated_file, "glossary.json", api_key,
                 model=model, temperature=temperature, workers=workers, thinking=thinking,
-                style_detect=style_detect, log=self.log, on_chapter=self.on_chapter_progress,
+                style_detect=style_detect, log=self.log, on_chapter=_on_chapter_gui,
                 should_stop=lambda: self.abort_requested, avoid_peak=avoid_peak,
             )
 
