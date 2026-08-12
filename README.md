@@ -15,6 +15,8 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
   * **JSON Fallback**: Nếu API trả về JSON lỗi cú pháp, hệ thống tự động dùng Regex bóc tách nội dung dịch thay vì crash pipeline.
   * **Hết số dư tài khoản (Balance Detection)**: Tự động nhận biết HTTP 402 `insufficient_user_balance` — dừng ngay lập tức, **không retry vô ích**, in thông báo rõ ràng và bảo toàn tiến độ để Resume khi nạp tiền xong.
 * 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản và xuất ra file `.epub` có mục lục hoàn chỉnh.
+* 📄 **PDF phòng hờ cho Termux**: Chọn định dạng EPUB, PDF hoặc cả hai ngay trên Web GUI. PDF hữu ích khi thiết bị chưa cài reader EPUB nhưng có sẵn viewer PDF (Google Drive, Files by Google, WPS,...). Tự dò font TTF hỗ trợ tiếng Việt trên hệ thống (Roboto/Noto trên Android, DejaVu trên Termux/Linux, Arial/Segoe trên Windows/macOS).
+* 💾 **Tuân thủ Android Scoped Storage (API 30+)**: Kết quả EPUB/PDF được lưu vào `~/storage/shared/Documents/DichTruyen/` (symlink hợp lệ do `termux-setup-storage` tạo) — user thấy ngay trong app quản lý file, không cần `MANAGE_EXTERNAL_STORAGE`. Tự động gọi `termux-media-scan` để reader mới hiện file tức thì (không cần khởi động lại máy). Trên PC lưu vào `~/Documents/DichTruyen/`.
 * ✅ **Kiểm tra chất lượng tự động (Validation)**: Module `validator.py` tự động chạy sau khi dịch xong để phát hiện: chương bị rỗng, số chương bị lệch so với bản gốc, và tồn dư ký tự tiếng Hán chưa được dịch.
 * 🔀 **Dịch nhiều truyện song song (Multi-Novel)**: `multi_pipeline.py` cho phép dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON. Các luồng chia sẻ tín hiệu dừng chung — nếu một truyện gặp lỗi hết token, **tất cả đều dừng ngay lập tức**.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện ghi đĩa sau mỗi chương. Khi bị gián đoạn, chạy lại sẽ tự động bỏ qua các chương đã dịch thành công.
@@ -118,10 +120,12 @@ python pipeline.py --raw "truyen_tho.txt" --title "Tên Truyện"
 | `--temperature` | `1.3` | Độ sáng tạo khi dịch |
 | `--chapters` | `0` | Giới hạn số chương cần cào/dịch (0 = toàn bộ) |
 | `--stream` | — | **[MỚI]** Kích hoạt chế độ Stream: cào xong chương nào, dịch ngay chương đó |
+| `--formats` | `epub` | Định dạng xuất: `epub` \| `pdf` (phòng hờ) \| `both` |
+| `--to-documents` / `--no-to-documents` | auto | Di chuyển sản phẩm vào `Documents/DichTruyen` sau khi xong (mặc định BẬT trên Termux, TẮT trên PC) |
 | `--no-style-detect` | — | Bỏ qua nhận diện văn phong |
 | `--allow-peak` | — | Cho phép dịch trong giờ cao điểm |
 
-#### Cách 4: Stream Mode — Cào và Dịch Đồng Thời 🆕
+#### Cách 3: Stream Mode — Cào và Dịch Đồng Thời 🆕
 Thay vì cào hết toàn bộ truyện rồi mới dịch, chế độ này cào từng chương và **dịch ngay lập tức** sau khi cào xong mỗi chương. Phù hợp khi bạn chỉ muốn dịch thử một số chương đầu hoặc muốn nhận bản dịch sớm nhất có thể.
 
 ```bash
@@ -143,7 +147,7 @@ python pipeline.py \
 * File `.txt` thô và file `.viet.txt` đều được ghi tăng dần sau mỗi chương, hỗ trợ **Resume** đầy đủ nếu bị ngắt giữa chừng.
 * Style Guide được phân tích trước từ chương đầu rồi áp dụng cho toàn bộ phiên dịch stream.
 
-#### Cách 3: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
+#### Cách 4: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
 Dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON:
 
 **Bước 1:** Tạo file `novels.json` (xem mẫu tại `novels.example.json`):
@@ -205,13 +209,15 @@ Hệ thống chỉ gửi ~50 thuật ngữ quan trọng nhất vào prompt (ti�
 
 | File | Chức năng |
 |---|---|
-| [web_gui.py](web_gui.py) | Giao diện Web GUI (chọn file, dịch thử, nút Dừng) |
-| [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB |
+| [web_gui.py](web_gui.py) | Giao diện Web GUI (chọn file, dịch thử, chọn EPUB/PDF/cả hai, nút Dừng) |
+| [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB/PDF |
 | [multi_pipeline.py](multi_pipeline.py) | 🆕 Pipeline đa truyện song song với balance detection |
 | [crawler.py](crawler.py) | Module cào dữ liệu từ web |
 | [deepseek_translate.py](deepseek_translate.py) | Module dịch thuật (Glossary, Style Guide, Error Handling, Balance Detection) |
 | [validator.py](validator.py) | 🆕 Module kiểm tra chất lượng bản dịch (sanity check) |
 | [build_epub.py](build_epub.py) | Module đóng gói EPUB |
+| [build_pdf.py](build_pdf.py) | 🆕 Module xuất PDF phòng hờ (fpdf2, tự dò font TTF hỗ trợ tiếng Việt) |
+| [output_storage.py](output_storage.py) | 🆕 Chọn thư mục lưu theo OS (Android Scoped Storage), kích hoạt `termux-media-scan` |
 | [text_postprocess.py](text_postprocess.py) | Module hậu xử lý, chuẩn hóa chính tả tiếng Việt |
 | [novels.example.json](novels.example.json) | 🆕 File cấu hình mẫu cho multi_pipeline.py |
 | [setup_termux.sh](setup_termux.sh) | Kịch bản cài đặt tự động trên Termux |
