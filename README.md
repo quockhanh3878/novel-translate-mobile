@@ -12,10 +12,13 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * ⚡ **Tối ưu DeepSeek Context Caching (MỚI)**: Tự động sắp xếp (sort) và đưa toàn bộ Glossary vào System Prompt, giữ tiền tố (prefix) bất biến giữa các chương để kích hoạt Context Cache Hit 100% (chỉ miss khi có từ mới). Giảm chi phí token xuống 10 lần và tăng tốc độ nhả chữ (TTFT) xuống mức mili-giây.
 * 🇻🇳 **Từ điển Ca dao Tục ngữ Tiếng Việt thuần (MỚI)**: Hệ thống được nạp sẵn gần 100 câu thành ngữ kinh điển kèm theo luồng lệnh (prompt rule) ép buộc AI phải dịch thoát nghĩa thành ngữ sang câu Tiếng Việt tương đương, tuyệt đối không lạm dụng âm Hán Việt gây khó hiểu (vd: "Nhất tiễn song điêu" -> "Một mũi tên trúng hai đích").
 * ✍️ **Đồng bộ Văn phong định kỳ (Style Re-analyze)**: Tự động phân tích văn phong từ 5 chương trải đều đầu/giữa/cuối khi bắt đầu. Đối với truyện dài 1000+ chương, **tự động tái phân tích lại sau mỗi 200 chương** để bắt kịp sự thay đổi văn phong giữa các arc truyện.
-* 🛡️ **Xử lý lỗi API bền bỉ (Robust Error Handling)**:
+* 🛡️ **Xử lý lỗi & Tối ưu API bền bỉ (Robust Architecture)**:
   * **Exponential Backoff**: Tự động retry với thời gian chờ tăng dần (2s, 4s, 8s...) khi gặp Rate Limit (429) hoặc Timeout (504).
   * **JSON Fallback**: Nếu API trả về JSON lỗi cú pháp, hệ thống tự động dùng Regex bóc tách nội dung dịch thay vì crash pipeline.
   * **Hết số dư tài khoản (Balance Detection)**: Tự động nhận biết HTTP 402 `insufficient_user_balance` — dừng ngay lập tức, **không retry vô ích**, in thông báo rõ ràng và bảo toàn tiến độ để Resume khi nạp tiền xong.
+  * **Streaming API & Connection Pooling (MỚI)**: Cắt giảm hàng trăm TLS handshakes dư thừa thông qua `requests.Session` và giải quyết triệt để lỗi timeout bằng cơ chế SSE Streaming cho các chương dài khi bật AI thinking.
+  * **Write-Ahead Cache (MỚI)**: Cơ chế sao lưu thông minh (fallback) bảo toàn dữ liệu JSON ngay khi vừa nhận từ API, chống mất tiền oan khi ứng dụng crash.
+  * **Cơ chế Bảo vệ Thiết bị (MỚI)**: Tự động kiểm tra dung lượng ổ đĩa chống tràn bộ nhớ và tích hợp tính năng Wake-lock giữ màn hình trên Termux chống Android đóng ứng dụng đột ngột.
 * 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản và xuất ra file `.epub` có mục lục hoàn chỉnh.
 * ✅ **Kiểm tra chất lượng tự động (Validation)**: Module `validator.py` tự động chạy sau khi dịch xong để phát hiện: chương bị rỗng, số chương bị lệch so với bản gốc, và tồn dư ký tự tiếng Hán chưa được dịch.
 * 🔀 **Dịch nhiều truyện song song (Multi-Novel)**: `multi_pipeline.py` cho phép dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON. Các luồng chia sẻ tín hiệu dừng chung — nếu một truyện gặp lỗi hết token, **tất cả đều dừng ngay lập tức**.

@@ -49,6 +49,59 @@ from crawler import CHAPTER_SEP, count_chapters, parse_chapters
 from text_postprocess import postprocess, postprocess_title
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
+
+# --- Connection pooling: reuse TCP/TLS connection giua cac API call ---
+_SESSION = requests.Session()
+_SESSION.headers.update({"Content-Type": "application/json"})
+
+# Nguong max_tokens de tu dong bat streaming (chi translate_chapter vuot nguong nay)
+_STREAM_THRESHOLD = 8192
+
+
+# --- Write-ahead cache: luu ket qua API truoc khi ghi file chinh ---
+# Tranh mat phi API khi crash/timeout giua luc postprocess hoac ghi file output.
+
+def _cache_dir(output_file: str) -> str:
+    """Thu muc cache nam cung cap voi file output."""
+    return os.path.join(os.path.dirname(os.path.abspath(output_file)) or ".", ".translation_cache")
+
+
+def _save_cache(output_file: str, chapter_idx: int, data: dict) -> None:
+    d = _cache_dir(output_file)
+    os.makedirs(d, exist_ok=True)
+    cache_file = os.path.join(d, f"ch_{chapter_idx}.json")
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _load_cache(output_file: str, chapter_idx: int) -> dict | None:
+    cache_file = os.path.join(_cache_dir(output_file), f"ch_{chapter_idx}.json")
+    if not os.path.exists(cache_file):
+        return None
+    try:
+        with open(cache_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _delete_cache(output_file: str, chapter_idx: int) -> None:
+    cache_file = os.path.join(_cache_dir(output_file), f"ch_{chapter_idx}.json")
+    try:
+        os.remove(cache_file)
+    except OSError:
+        pass
+
+
+def _clear_cache(output_file: str) -> None:
+    """Xoa toan bo thu muc cache khi dich xong toan truyen."""
+    d = _cache_dir(output_file)
+    if os.path.isdir(d):
+        import shutil
+        try:
+            shutil.rmtree(d)
+        except OSError:
+            pass
 # Giu ten cu de tuong thich nguoc voi code/test da import truoc do.
 count_translated_chapters = count_chapters
 
@@ -276,10 +329,61 @@ def filter_glossary(glossary: dict, meta: dict, current_chapter: int,
     return {zh: vi for _, zh, vi in scored[:max_entries]}
 
 
+def _parse_sse_stream(response) -> str:
+    """Doc SSE stream tu DeepSeek API, gop delta.content thanh chuoi day du.
+    Bo qua reasoning_content (thinking) vi ta chi can ket qua cuoi."""
+    content_parts = []
+    for line in response.iter_lines(decode_unicode=True):
+        if not line or not line.startswith("data: "):
+            continue
+        data = line[6:]
+        if data.strip() == "[DONE]":
+            break
+        try:
+            chunk = json.loads(data)
+            delta = chunk["choices"][0].get("delta", {})
+            c = delta.get("content")
+            if c:
+                content_parts.append(c)
+        except (json.JSONDecodeError, KeyError, IndexError):
+            continue  # Bo qua chunk loi, doc tiep
+    return "".join(content_parts)
+
+
+def _parse_json_content(content: str) -> dict:
+    """Parse JSON tu content API tra ve, co regex fallback khi JSON khong hop le."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        import re
+        try:
+            result = {}
+            title_match = re.search(r'"title"\s*:\s*"([^"]+)"', content)
+            if title_match: result["title"] = title_match.group(1)
+
+            para_match = re.search(r'"paragraphs"\s*:\s*\[(.*?)\]', content, re.DOTALL)
+            if para_match:
+                paras_str = para_match.group(1)
+                paras = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', paras_str)
+                result["paragraphs"] = [p.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\') for p in paras]
+
+            nn_match = re.search(r'"(?:new_names|new_terms)"\s*:\s*\{(.*?)\}', content, re.DOTALL)
+            result["new_terms"] = {}
+            if nn_match:
+                pairs = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', nn_match.group(1))
+                for k, v in pairs: result["new_terms"][k] = v
+
+            if "paragraphs" in result and result["paragraphs"]:
+                return result
+            raise e
+        except Exception:
+            raise e
+
+
 def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str,
                    temperature: float, max_retries: int = 5, thinking: bool = False,
                    max_tokens: int = 4096, should_stop=None) -> dict:
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {api_key}"}
     payload = {
         "model": model,
         "messages": [
@@ -303,41 +407,38 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
         # goi khac (vd style-detect, luon ngan).
         "max_tokens": max_tokens,
     }
+
+    # Tu dong bat streaming cho API call nang (translate_chapter) de tranh timeout.
+    # Streaming cho phep moi chunk co read_timeout rieng (300s) thay vi gioi han
+    # tong 180s cho toan bo response - chuong dai voi thinking co the mat 10-30 phut.
+    use_stream = max_tokens > _STREAM_THRESHOLD
+    if use_stream:
+        payload["stream"] = True
+
     last_err = None
     for attempt in range(max_retries):
         if should_stop and should_stop():
             raise RuntimeError("Da dung theo yeu cau.")
         try:
-            resp = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, timeout=180)
+            # Timeout: (connect, read). Streaming dung read_timeout per-chunk cao hon
+            # vi moi chunk chi can den trong 300s (khong gioi han tong).
+            timeout = (10, 300) if use_stream else (10, 180)
+            resp = _SESSION.post(DEEPSEEK_API_URL, headers=headers, json=payload,
+                                 timeout=timeout, stream=use_stream)
+
             if resp.status_code == 200:
-                content = resp.json()["choices"][0]["message"]["content"]
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError as e:
-                    import re
-                    try:
-                        # Regex fallback for malformed JSON
-                        result = {}
-                        title_match = re.search(r'"title"\s*:\s*"([^"]+)"', content)
-                        if title_match: result["title"] = title_match.group(1)
-                        
-                        para_match = re.search(r'"paragraphs"\s*:\s*\[(.*?)\]', content, re.DOTALL)
-                        if para_match:
-                            paras_str = para_match.group(1)
-                            paras = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', paras_str)
-                            result["paragraphs"] = [p.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\') for p in paras]
-                            
-                        nn_match = re.search(r'"(?:new_names|new_terms)"\s*:\s*\{(.*?)\}', content, re.DOTALL)
-                        result["new_terms"] = {}
-                        if nn_match:
-                            pairs = re.findall(r'"([^"]+)"\s*:\s*"([^"]+)"', nn_match.group(1))
-                            for k, v in pairs: result["new_terms"][k] = v
-                            
-                        if "paragraphs" in result and result["paragraphs"]:
-                            return result
-                        raise e
-                    except Exception:
-                        raise e
+                if use_stream:
+                    content = _parse_sse_stream(resp)
+                else:
+                    content = resp.json()["choices"][0]["message"]["content"]
+
+                if not content or not content.strip():
+                    last_err = RuntimeError("API tra ve content rong")
+                    time.sleep(min(2 ** attempt, 30))
+                    continue
+
+                return _parse_json_content(content)
+
             elif resp.status_code == 402:
                 # Het so du tai khoan - khong retry, phat ngay
                 try:
@@ -515,9 +616,17 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
         log(f"CANH BAO: workers={workers} - nhieu chapter dich song song co the lam mat nhat quan ten rieng.")
 
     def _work(ch, chapter_idx):
-        return translate_chapter(ch, system_prompt, api_key, model,
+        # Kiem tra write-ahead cache truoc khi goi API
+        cached = _load_cache(output_file, chapter_idx)
+        if cached is not None:
+            log(f"[{chapter_idx}/{len(chapters)}] Cache hit - bo qua API call")
+            return cached
+        result = translate_chapter(ch, system_prompt, api_key, model,
                                   temperature, thinking=thinking, should_stop=should_stop,
                                   chapter_idx=chapter_idx)
+        # Ghi write-ahead cache ngay khi API tra ve thanh cong
+        _save_cache(output_file, chapter_idx, result)
+        return result
 
     # Nop theo tung dot toi da `workers` chuong (khong dung executor.map()): map() nop
     # HET pending ngay lap tuc bat ke so worker, nen bam "Dung" van khong ngan duoc cac
@@ -584,6 +693,8 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
                         f_out.write(f"{p}\n\n")
                     f_out.write(CHAPTER_SEP)
                     f_out.flush()
+                    # Ghi file chinh thanh cong -> xoa cache
+                    _delete_cache(output_file, idx)
 
                     actual_new_count = 0
                     if translated["new_terms"]:
@@ -621,6 +732,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
             log(f"  - Chuong {fc['index']}: {fc['title']} | {fc['error']}")
     elif not stopped:
         log("Hoan tat dich thuat!")
+        _clear_cache(output_file)
     return failed_chapters
 
 
@@ -670,30 +782,41 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                 break
 
             idx += 1
-            try:
-                translated = translate_chapter(
-                    chapter, system_prompt, api_key, model,
-                    temperature, thinking=thinking, should_stop=should_stop,
-                    chapter_idx=idx
-                )
-            except InsufficientBalanceError as e:
-                log(f"\n{'='*60}")
-                log(f"[!!! HET SO DU API !!!] {e}")
-                log(f"{'='*60}")
-                if on_balance_error:
-                    on_balance_error(str(e))
-                failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
-                break
-            except Exception as e:
-                log(f"[{idx}] LOI dich '{chapter['title']}': {type(e).__name__}: {e}")
-                failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
-                continue
+
+            # Kiem tra write-ahead cache
+            cached = _load_cache(output_file, idx)
+            if cached is not None:
+                log(f"[{idx}] Cache hit - bo qua API call")
+                translated = cached
+            else:
+                try:
+                    translated = translate_chapter(
+                        chapter, system_prompt, api_key, model,
+                        temperature, thinking=thinking, should_stop=should_stop,
+                        chapter_idx=idx
+                    )
+                    # Ghi write-ahead cache ngay khi API tra ve thanh cong
+                    _save_cache(output_file, idx, translated)
+                except InsufficientBalanceError as e:
+                    log(f"\n{'='*60}")
+                    log(f"[!!! HET SO DU API !!!] {e}")
+                    log(f"{'='*60}")
+                    if on_balance_error:
+                        on_balance_error(str(e))
+                    failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                    break
+                except Exception as e:
+                    log(f"[{idx}] LOI dich '{chapter['title']}': {type(e).__name__}: {e}")
+                    failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                    continue
 
             f_out.write(f"=== {translated['title']} ===\n\n")
             for p in translated["paragraphs"]:
                 f_out.write(f"{p}\n\n")
             f_out.write(CHAPTER_SEP)
             f_out.flush()
+            # Ghi file chinh thanh cong -> xoa cache
+            _delete_cache(output_file, idx)
 
             actual_new_count = 0
             if translated["new_terms"]:

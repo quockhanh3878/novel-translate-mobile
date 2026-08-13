@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import signal
 import sys
 
@@ -47,6 +48,21 @@ from build_epub import build_epub
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream
 from deepseek_translate import load_dotenv, translate_novel, translate_novel_stream, detect_style_guide
 from validator import validate_translation
+
+
+def _check_disk_space(path: str, warn_mb: int = 100, min_mb: int = 20) -> None:
+    """Kiem tra dung luong disk con lai. Canh bao neu < warn_mb, dung neu < min_mb."""
+    try:
+        target_dir = os.path.dirname(os.path.abspath(path)) or "."
+        usage = shutil.disk_usage(target_dir)
+        free_mb = usage.free / (1024 * 1024)
+        if free_mb < min_mb:
+            print(f"LOI: Chi con {free_mb:.0f} MB dung luong trong. Can it nhat {min_mb} MB de tiep tuc.")
+            sys.exit(1)
+        if free_mb < warn_mb:
+            print(f"CANH BAO: Chi con {free_mb:.0f} MB dung luong trong. Co the khong du cho truyen dai.")
+    except OSError:
+        pass  # Bo qua neu khong doc duoc disk info (vd tren mot so filesystem dac biet)
 
 
 def main():
@@ -106,6 +122,9 @@ def main():
                 print(f"[EPUB] Da dong goi {existing_count} chuong vao: {epub_path}")
             except Exception as e:
                 print(f"[EPUB] Loi khi dong goi ban cu: {e}")
+
+    # Kiem tra dung luong disk truoc khi bat dau
+    _check_disk_space(args.raw)
 
     print("=== Buoc 1/4: Cao truyen ===")
     if args.stream and args.start_url:

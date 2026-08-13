@@ -25,6 +25,29 @@ from text_postprocess import postprocess
 # Load env variables on startup
 load_dotenv()
 
+# --- Termux wake-lock: giu man hinh/CPU hoat dong khi dich ---
+_IS_TERMUX = os.path.exists("/data/data/com.termux")
+
+
+def _termux_wake_lock():
+    """Bat wake-lock tren Termux de Android khong kill process khi tat man hinh."""
+    if _IS_TERMUX:
+        try:
+            subprocess.run(["termux-wake-lock"], timeout=5,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+
+def _termux_wake_unlock():
+    """Tat wake-lock khi pipeline ket thuc."""
+    if _IS_TERMUX:
+        try:
+            subprocess.run(["termux-wake-unlock"], timeout=5,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
 def save_api_key(key):
     key = key.strip()
     if not key:
@@ -1393,6 +1416,7 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
         )
 
     try:
+        _termux_wake_lock()
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding="utf-8", errors="replace")
         with LOCK:
             CURRENT_PROC = proc
@@ -1480,6 +1504,8 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
             STATE["error_detail"] = traceback.format_exc()
             STATE["step"] = "idle"
             CURRENT_PROC = None
+    finally:
+        _termux_wake_unlock()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
