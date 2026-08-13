@@ -118,7 +118,7 @@ class AppGUI(tk.Tk):
         left = ttk.Frame(self.tab_config, padding=20)
         left.grid(row=0, column=0, sticky="nsew")
 
-        ttk.Label(left, text="Quy trình: Cào → Dịch (DeepSeek) → EPUB", style="Header.TLabel").pack(
+        ttk.Label(left, text="Quy trình: Cào → Dịch (DeepSeek Cache & Thuần Việt) → EPUB", style="Header.TLabel").pack(
             anchor="w", pady=(0, 15))
 
         api_key = os.environ.get("DEEPSEEK_API_KEY")

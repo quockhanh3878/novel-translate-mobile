@@ -742,7 +742,7 @@ PAGE = """<!doctype html>
 <body>
     <div class="container">
         <h2>DỊCH TRUYỆN NOVEL</h2>
-        <div class="subtitle">Hệ thống dịch thuật tự động sử dụng DeepSeek API</div>
+        <div class="subtitle">Hệ thống dịch thuật tự động sử dụng DeepSeek API<br><span style="color: var(--accent-cyan); font-size: 13px;">Tích hợp Context Caching Siêu Tốc & Từ điển Thành Ngữ Thuần Việt</span></div>
         
         <div id="key-warning" class="result-box error" style="display: none; margin-top: 0; margin-bottom: 20px; font-weight: normal; text-align: left;">
             ⚠️ <strong>Thiếu DEEPSEEK_API_KEY:</strong> Vui lòng nhập API Key xuống ô bên dưới và nhấn <strong>Lưu Key</strong> để bắt đầu sử dụng dịch thuật DeepSeek.

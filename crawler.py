@@ -3,17 +3,29 @@ import os
 import re
 import sys
 import time
+import random
+import cloudscraper
 
-import requests
 from bs4 import BeautifulSoup
 
 DEFAULT_START_URL = "https://www.wa01.com/novel/pagea/disanchongrenge-changshuxin_1.html"
 DEFAULT_OUTPUT = "truyen_de_tam_trung_nhan_cach.txt"
 CHAPTER_SEP = "\n" + "=" * 40 + "\n\n"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+CLOUDFLARE_BROWSERS = [
+    {"browser": "chrome", "platform": "windows", "mobile": False},
+    {"browser": "chrome", "platform": "linux", "mobile": False},
+    {"browser": "firefox", "platform": "windows", "mobile": False},
+    {"browser": "firefox", "platform": "linux", "mobile": False}
+]
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15"
+]
 
 
 # --- Dinh dang file chung (=== Tieu de ===, doan van, "="*40 ngan cach chuong) -------
@@ -68,7 +80,16 @@ def guess_title(text: str) -> str:
 def crawl_chapter(url, log=print):
     log(f"Fetching: {url}")
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        # Xoay vong cau hinh browser de sinh TLS fingerprint tuong ung
+        browser_config = random.choice(CLOUDFLARE_BROWSERS)
+        scraper = cloudscraper.create_scraper(browser=browser_config)
+        
+        # Xoay vong User-Agent bo sung
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS)
+        }
+
+        response = scraper.get(url, headers=headers, timeout=15)
         if response.status_code == 404:
             log("Returned 404 (Not Found). Ending crawl.")
             return None
@@ -104,7 +125,7 @@ def crawl_chapter(url, log=print):
 
         return {'title': title, 'paragraphs': paragraphs}
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         log(f"Error fetching {url}: {e}")
         return False  # Indication to retry or pause
 
@@ -167,7 +188,7 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
                 log("Da dung theo yeu cau. Chay lai se tu tiep tuc tu day.")
                 break
 
-            time.sleep(1)  # Polite crawling delay
+            time.sleep(random.uniform(2.0, 5.0))  # Polite crawling delay
 
     return saved
 
@@ -238,7 +259,7 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
 
             yield result  # Giao ngay cho pipeline de dich
 
-            time.sleep(1)  # Polite crawling delay
+            time.sleep(random.uniform(2.0, 5.0))  # Polite crawling delay
 
 
 def main():

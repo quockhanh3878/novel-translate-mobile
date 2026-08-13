@@ -600,6 +600,14 @@ class AppGUI(tk.Tk):
             # Write EPUB file
             epub.write_epub(epub_path, book, {})
             
+            try:
+                from build_epub import copy_to_downloads
+                dl_path = copy_to_downloads(epub_path)
+                if dl_path:
+                    self.log(f"\n[CLONE] Đã sao chép một bản sang thư mục Download: {dl_path}")
+            except Exception as dl_err:
+                self.log(f"\n[WARNING] Không thể sao chép sang thư mục Download: {dl_err}")
+            
             # Clean up temporary cover image
             if os.path.exists(cover_img_path):
                 os.remove(cover_img_path)

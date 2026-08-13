@@ -56,9 +56,9 @@ def demo():
         assert chapters[0]["paragraphs"] == ["你好世界。", "第二段。"]
         assert chapters[1]["title"] == "第2章 继续"
 
-        prompt = build_user_prompt(chapters[0], {"你好": "Xin chao"})
-        assert "你好 = Xin chao" in prompt
+        prompt = build_user_prompt(chapters[0])
         assert "你好世界" in prompt
+        assert "你好 = Xin chao" not in prompt
 
         vi_path = os.path.join(d, "vi.txt")
         with open(vi_path, "w", encoding="utf-8") as f:

@@ -60,6 +60,45 @@ def generate_cover_image(title: str, author: str, output_path: str) -> None:
     image.save(output_path, "JPEG")
 
 
+def copy_to_downloads(src_path: str) -> str | None:
+    """
+    Sao chep file epub sang thu muc Download cua thiet bi (Android, Windows, macOS, Linux).
+    """
+    import os
+    import shutil
+
+    if not os.path.exists(src_path):
+        return None
+
+    filename = os.path.basename(src_path)
+    
+    # Kiem tra thu muc Download tren Android (Termux)
+    android_download = os.path.expanduser("~/storage/shared/Download")
+    if os.path.isdir(android_download):
+        dest_dir = android_download
+    elif os.path.isdir("/sdcard/Download"):
+        dest_dir = "/sdcard/Download"
+    else:
+        # Kiem tra tren cac he dieu hanh khac (Windows, macOS, Linux)
+        dest_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+
+    if not os.path.exists(dest_dir):
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    if os.path.isdir(dest_dir):
+        dest_path = os.path.join(dest_dir, filename)
+        try:
+            shutil.copy2(src_path, dest_path)
+            return dest_path
+        except Exception as e:
+            print(f"Loi khi clone file sang thu muc Download: {e}")
+            return None
+    return None
+
+
 def build_epub(input_file: str, output_file: str, title: str, author: str) -> str:
     chapters = parse_chapters(input_file)
     if not chapters:
@@ -111,6 +150,10 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     book.spine = ["nav"] + epub_chapters
 
     epub.write_epub(output_file, book, {})
+    try:
+        copy_to_downloads(output_file)
+    except Exception as e:
+        print(f"Loi clone file sang Download: {e}")
     return output_file
 
 
