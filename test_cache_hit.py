@@ -18,7 +18,7 @@ def main():
         
     print("\nTesting build_system_prompt logic...")
     glossary = {"Test": "Kiem tra", "Apple": "Qua tao", "Zebra": "Ngua van"}
-    glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in sorted(glossary.items()))
+    glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in glossary.items())
     glossary_block = f"Glossary (Trung = Viet, dung co dinh):\n{glossary_lines or '(khong co)'}\n"
     
     system_prompt = dt.TRANSLATE_SYSTEM_PROMPT.format(
@@ -27,10 +27,10 @@ def main():
         glossary_block=glossary_block
     )
     
-    if "Apple = Qua tao\nTest = Kiem tra\nZebra = Ngua van" in system_prompt:
-        print("\n[PASSED] System prompt contains correctly sorted glossary!")
+    if "Test = Kiem tra\nApple = Qua tao\nZebra = Ngua van" in system_prompt:
+        print("\n[PASSED] System prompt contains glossary in correct insertion order!")
     else:
-        print("\n[FAILED] System prompt glossary is missing or not sorted correctly!")
+        print("\n[FAILED] System prompt glossary is missing or order is incorrect!")
 
 if __name__ == "__main__":
     main()

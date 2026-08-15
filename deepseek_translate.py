@@ -154,12 +154,11 @@ def wait_until_offpeak(log=print, should_stop=None, poll_seconds: int = 30) -> b
 
 TRANSLATE_SYSTEM_PROMPT = """Ban la dich gia tieu thuyet mang chuyen nghiep, dich Trung -> Viet.
 {style_guide_block}
-{glossary_block}
 Yeu cau bat buoc:
 1. Dich tu nhien, dung van phong da xac dinh o tren, loi thoai song dong, khong dich
    tung chu mot cach may moc.
 2. ĐỐI VỚI THÀNH NGỮ, TỤC NGỮ: Bắt buộc phải tìm câu tương đương trong tiếng Việt thuần để dịch (VD: 'nhất tiễn song điêu' -> 'một mũi tên trúng hai đích'). TUYỆT ĐỐI KHÔNG để nguyên âm Hán Việt gây khó hiểu. Nếu không có câu tương đương, hãy dịch thoát nghĩa.
-3. Dung CHINH XAC ban thuat ngu (glossary) duoc cung cap cho ten nhan vat/dia danh/
+3. Dung CHINH XAC ban thuat ngu (glossary) duoc cung cap o cuoi prompt cho ten nhan vat/dia danh/
    thuat ngu rieng, ap dung xuyen suot de dam bao tinh nhat quan giua cac chuong.
 4. Neu gap ten nhan vat/dia danh, va {term_categories} CHUA co trong glossary, hay CHON MOT
    CACH DICH CO DINH duy nhat cho no va liet ke vao truong "new_terms" de dung lai
@@ -180,6 +179,8 @@ Viec dich TIEU DE CHUONG:
 - Uu tien cach dich goi am, ngan gon, de nho. VD: "一念永恒" -> "Nhat niem vinh hang",
   "Thien dao vo than" -> "Thien dao vo than", "Phuc sinh" -> "Phuc sinh".
 - Giu nguyen phong cach cua tieu de goc (neu goc ngan thi dich cung ngan).
+
+{glossary_block}
 """
 
 STYLE_SYSTEM_PROMPT = """Ban la bien tap vien tieu thuyet mang giau kinh nghiem.
@@ -265,7 +266,7 @@ def load_glossary(path: str) -> dict:
 
 def save_glossary(path: str, glossary: dict) -> None:
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(glossary, f, ensure_ascii=False, indent=2, sort_keys=True)
+        json.dump(glossary, f, ensure_ascii=False, indent=2)
 
 
 # --- Glossary Meta (tracking last_seen chapter + frequency) ---
@@ -284,7 +285,7 @@ def load_glossary_meta(glossary_path: str) -> dict:
 
 def save_glossary_meta(glossary_path: str, meta: dict) -> None:
     with open(_meta_path(glossary_path), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2, sort_keys=True)
+        json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
 def cleanup_glossary_meta(meta: dict, current_chapter: int, max_idle_chapters: int = 100) -> dict:
@@ -601,7 +602,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str, api_k
 
     def build_system_prompt(current_style, current_term_cats, current_glossary):
         style_block = f"Van phong ap dung cho toan truyen: {current_style}\n" if current_style else ""
-        glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in sorted(current_glossary.items()))
+        glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in current_glossary.items())
         glossary_block = f"Glossary (Trung = Viet, dung co dinh):\n{glossary_lines or '(khong co)'}\n"
         return TRANSLATE_SYSTEM_PROMPT.format(
             style_guide_block=style_block,
@@ -762,7 +763,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
 
     def build_system_prompt(current_style, current_glossary):
         style_block = f"Van phong ap dung cho toan truyen: {current_style}\n" if current_style else ""
-        glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in sorted(current_glossary.items()))
+        glossary_lines = "\n".join(f"{zh} = {vi}" for zh, vi in current_glossary.items())
         glossary_block = f"Glossary (Trung = Viet, dung co dinh):\n{glossary_lines or '(khong co)'}\n"
         return TRANSLATE_SYSTEM_PROMPT.format(
             style_guide_block=style_block,
