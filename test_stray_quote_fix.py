@@ -24,6 +24,13 @@ def demo():
     out = postprocess("Bát Hỉ nói: “Không sao đâu, mọi thứ đều ổn.”")
     assert out == "Bát Hỉ nói: “Không sao đâu, mọi thứ đều ổn.”", out
 
+    # Model tra ngoac thang: khong duoc chen them " o dau (loi cu ra '""Anh roi...'),
+    # doi thanh cap “ ” va tach khoang trang kieu tieng Viet.
+    out = postprocess('Cảnh sát:"Tổng Cố à, còn nhớ không?"')
+    assert out == "Cảnh sát: “Tổng Cố à, còn nhớ không?”", out
+    out = postprocess('"Vậy chuyện này nên để cảnh sát kinh tế ra tay chứ?"Phạm Thừa Hòa trả lại điện thoại.')
+    assert out == "“Vậy chuyện này nên để cảnh sát kinh tế ra tay chứ?” Phạm Thừa Hòa trả lại điện thoại.", out
+
     print("OK: dau ngoac kep le cuoi cau duoc ghep lai dung nhu ky vong.")
 
 

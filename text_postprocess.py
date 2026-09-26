@@ -47,12 +47,28 @@ def _fix_stray_trailing_quote(text: str) -> str:
     return f"“{head}” {tail}"
 
 
+def _curl_straight_quotes(text: str) -> str:
+    """Đổi ngoặc thẳng (") thành cặp “ ” xen kẽ khi số dấu chẵn (model đôi khi trả ngoặc thẳng).
+    Số lẻ thì không đoán được dấu nào mở/đóng -> giữ nguyên."""
+    count = text.count('"')
+    if count == 0 or count % 2:
+        return text
+    parts = text.split('"')
+    out = [parts[0]]
+    for i, part in enumerate(parts[1:]):
+        out.append("“" if i % 2 == 0 else "”")
+        out.append(part)
+    return "".join(out)
+
+
 def _fix_missing_opening_quote(text: str) -> str:
-    """Nếu dấu ngoặc kép đầu tiên trong câu là dấu đóng, có thể câu bị khuyết dấu mở ở đầu."""
+    """Nếu dấu ngoặc kép đầu tiên trong câu là dấu đóng, có thể câu bị khuyết dấu mở ở đầu.
+    Ngoặc thẳng (") vừa là mở vừa là đóng nên bỏ qua - trước đây nó làm mọi đoạn có
+    ngoặc thẳng bị chèn thêm 1 dấu " ở đầu."""
     first_quote_idx = -1
     first_quote_char = ''
     for i, char in enumerate(text):
-        if char in _ANY_QUOTE:
+        if char in _ANY_QUOTE and char != '"':
             first_quote_idx = i
             first_quote_char = char
             break
@@ -75,6 +91,7 @@ def postprocess(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = _collapse_repeated_words(text)
     text = re.sub(r"^[\s,;.\-!?]+", "", text)
+    text = _curl_straight_quotes(text)
     text = _fix_missing_opening_quote(text)
     text = _fix_stray_trailing_quote(text)
     text = re.sub(r"\s+([,;.!?])", r"\1", text)
@@ -114,6 +131,9 @@ def postprocess(text: str) -> str:
     # Dọn lại lần nữa
     text = re.sub(rf"([{_OPEN_QUOTES}])\s+", r"\1", text)
     text = re.sub(rf"\s+([{_CLOSE_QUOTES}])", r"\1", text)
+    # Truyện Trung viết liền ：“…”范承和; tiếng Việt cần cách: ...: “…” Phạm Thừa Hòa
+    text = re.sub(r"”(?=\w)", "” ", text)
+    text = re.sub(r"(?<=[\w:,])“", " “", text)
 
     text = re.sub(r"\.\.\.\.+", "...", text)
     text = re.sub(r"[,;]\s*$", ".", text)

@@ -7,10 +7,10 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 ## 🌟 Các chức năng chính
 
 * 🕷️ **Cào truyện thông minh**: Tự động lấy nội dung từ URL chương nguồn. Tích hợp thời gian chờ lịch sự (delay 1-5 giây) giúp tránh bị máy chủ chặn IP (Anti-scraping bypass).
-* 🤖 **Dịch thuật AI chất lượng cao**: Kết nối trực tiếp tới API DeepSeek (`deepseek-v4-flash`, `deepseek-chat`,...) với Prompt được tinh chỉnh tối ưu cho dịch thuật văn học Trung-Việt.
-* 📖 **Đồng bộ Thuật ngữ thông minh (Smart Glossary + Sliding Window)**: Tự động phân tích thể loại truyện (Tiên hiệp, Đô thị...) để trích xuất **đúng các danh mục từ vựng đặc thù** (công pháp, cảnh giới, tên công ty, v.v.). Hệ thống theo dõi tần suất và thời gian gần nhất của mỗi thuật ngữ, chỉ gửi ~50 thuật ngữ quan trọng nhất vào context window. File `glossary_meta.json` được tự động **làm sạch (TTL Cleanup)** định kỳ sau mỗi batch — các thuật ngữ `count=1` và vắng bóng quá 100 chương sẽ bị xóa để tránh phình file.
+* 🤖 **Dịch thuật AI chất lượng cao**: Kết nối trực tiếp tới API DeepSeek (mặc định `deepseek-flash`, suy luận mức trung bình) với Prompt được tinh chỉnh tối ưu cho dịch thuật văn học Trung-Việt.
+* 📖 **Nhất quán tên riêng (Glossary riêng từng truyện)**: Mỗi truyện có `<file dịch>_glossary.json` riêng. Trước khi dịch, bước chuẩn bị quét cả truyện và chốt sẵn tên nhân vật, địa danh, tổ chức bằng suy luận cao; trong lúc dịch vẫn tự học tên còn thiếu; tên đã có không bao giờ bị ghi đè. Mỗi chương chỉ gửi những tên thật sự xuất hiện trong chương đó.
 * ⚡ **Tối ưu DeepSeek Context Caching (MỚI)**: Glossary được sắp xếp ổn định và lọc theo cửa sổ trượt, chỉ gửi tối đa khoảng 50 thuật ngữ quan trọng vào prompt. Cách này giữ phần prompt dùng chung ổn định giữa các chương và giảm lượng token phải gửi; tỷ lệ cache hit thực tế phụ thuộc vào API và nội dung từng request.
-* 🇻🇳 **Từ điển Ca dao Tục ngữ Tiếng Việt thuần (MỚI)**: Hệ thống được nạp sẵn gần 100 câu thành ngữ kinh điển kèm theo luồng lệnh (prompt rule) ép buộc AI phải dịch thoát nghĩa thành ngữ sang câu Tiếng Việt tương đương, tuyệt đối không lạm dụng âm Hán Việt gây khó hiểu (vd: "Nhất tiễn song điêu" -> "Một mũi tên trúng hai đích").
+* 🇻🇳 **Từ điển thành ngữ riêng cho từng truyện (MỚI)**: Thành ngữ, tục ngữ, 歇后语 được dịch sang thành ngữ thuần Việt tương đương (ưu tiên thuần Việt, rồi Hán Việt quen dùng, rồi khẩu ngữ; cấm dịch sát chữ). Cách dịch model đã dùng được ghi vào `<file dịch>_idioms.json` và dùng lại ở chương sau cho thống nhất cả truyện - không cần duyệt tay. Xem mục "Quy trình dịch".
 * ✍️ **Đồng bộ Văn phong định kỳ (Style Re-analyze)**: Tự động phân tích văn phong từ 5 chương trải đều đầu/giữa/cuối khi bắt đầu. Đối với truyện dài 1000+ chương, **tự động tái phân tích lại sau mỗi 200 chương** để bắt kịp sự thay đổi văn phong giữa các arc truyện.
 * 🛡️ **Xử lý lỗi & Tối ưu API bền bỉ (Robust Architecture)**:
   * **Exponential Backoff**: Tự động retry với thời gian chờ tăng dần (2s, 4s, 8s...) khi gặp Rate Limit (429) hoặc Timeout (504).
@@ -23,7 +23,7 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * ✅ **Kiểm tra chất lượng tự động (Validation)**: Module `validator.py` tự động chạy sau khi dịch xong để phát hiện: chương bị rỗng, số chương bị lệch so với bản gốc, và tồn dư ký tự tiếng Hán chưa được dịch.
 * 🔀 **Dịch nhiều truyện song song (Multi-Novel)**: `multi_pipeline.py` cho phép dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON. Các luồng chia sẻ tín hiệu dừng chung — nếu một truyện gặp lỗi hết token, **tất cả đều dừng ngay lập tức**.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện ghi đĩa sau mỗi chương. Khi bị gián đoạn, chạy lại sẽ tự động bỏ qua các chương đã dịch thành công.
-* 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm (9-12h, 14-18h giờ Bắc Kinh, giá tăng gấp đôi) để tạm dừng và tự động tiếp tục.
+* 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm (9-12h, 14-18h giờ Bắc Kinh, thứ 2 đến thứ 6, giá tăng gấp đôi; cuối tuần giá thấp cả ngày) để tạm dừng và tự động tiếp tục.
 * 🖥️ **Giao diện Web GUI & Widget 1-chạm**: Giao diện Responsive (Glassmorphism dark mode) mượt mà trên cả trình duyệt điện thoại và PC. Hỗ trợ Widget Termux trên Android.
 
 ---
@@ -140,14 +140,16 @@ python pipeline.py --raw "truyen_tho.txt" --title "Tên Truyện"
 **Tham số CLI:**
 | Tham số | Mặc định | Mô tả |
 |---|---|---|
-| `--model` | `deepseek-v4-flash` | Model dịch thuật |
+| `--model` | `deepseek-flash` | Model dịch thuật |
+| `--reasoning-effort` | `medium` | Mức suy luận: `low` / `medium` / `high` / `max` (API quy `medium` về `high`) |
 | `--workers` | `1` | Số luồng dịch song song (>1 có thể làm mất nhất quán tên riêng) |
 | `--temperature` | `1.3` | Độ sáng tạo khi dịch |
 | `--chapters` | `0` | Giới hạn số chương cần cào/dịch (0 = toàn bộ) |
 | `--stream` | — | **[MỚI]** Kích hoạt chế độ Stream: cào xong chương nào, dịch ngay chương đó |
 | `--no-style-detect` | — | Bỏ qua nhận diện văn phong |
+| `--no-prepare` | — | Bỏ qua bước chuẩn bị (quét cả truyện lập glossary tên + cách dịch thành ngữ trước khi dịch) |
 | `--allow-peak` | — | Cho phép dịch trong giờ cao điểm |
-| `--no-thinking` | — | Tắt reasoning; chỉ dùng khi chấp nhận chất lượng có thể giảm |
+| `--no-thinking` | — | Tắt suy luận. Không khuyên dùng: rẻ hơn ~4 lần nhưng thành ngữ sai nghĩa, sót chữ Hán |
 | `--env-file` | `.env` | File chứa `DEEPSEEK_API_KEY` |
 | `--api-key` | — | Truyền API key trực tiếp cho một lần chạy |
 
@@ -172,7 +174,7 @@ python pipeline.py \
 **Lưu ý:**
 * File `.txt` thô và file `.viet.txt` đều được ghi tăng dần sau mỗi chương, hỗ trợ **Resume** đầy đủ nếu bị ngắt giữa chừng.
 * Style Guide được phân tích trước từ chương đầu rồi áp dụng cho toàn bộ phiên dịch stream.
-* Thành ngữ có trong `dictionaries/idioms_verified.json` được đánh dấu và tiền xử lý trước khi gọi API để tránh dịch lại sai nghĩa.
+* Stream Mode dùng cùng từ điển thành ngữ riêng của truyện như chế độ thường.
 
 #### Cách 4: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
 Dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON:
@@ -184,7 +186,7 @@ Dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON:
     "raw": "truyen_A_raw.txt",
     "title": "Tên Truyện A",
     "author": "Tác Giả A",
-    "glossary": "glossary_A.json"
+    "reasoning_effort": "medium"
   },
   {
     "raw": "truyen_B_raw.txt",
@@ -206,10 +208,29 @@ python multi_pipeline.py --config novels.json
 
 ---
 
+## Quy trình dịch (chốt 2026-09-26)
+
+1. **Cào** chương nguồn (`crawler.py`).
+2. **Phân tích văn phong** từ vài chương đầu/giữa/cuối.
+3. **Chuẩn bị** (`prepare_novel.py`, tự chạy, tắt bằng `--no-prepare`): quét toàn bộ truyện đã cào.
+   * Tên riêng: code đếm các cụm chữ Hán lặp lại nhiều lần, đứng độc lập, không phải từ thông dụng hay thành ngữ, lấy vài trăm ứng viên kèm câu trích; model suy luận cao (high) lọc ra tên người, biệt danh, chức danh + họ, địa danh, tổ chức và chốt cách dịch. Ghi thêm vào `<file dịch>_glossary.json`, không ghi đè tên đã có.
+   * Thành ngữ: mọi thành ngữ trong truyện chưa có cách dịch được model suy luận cao dịch sẵn theo cùng quy tắc ưu tiên, ghi vào `<file dịch>_idioms.json` (nguồn `chuan_bi`). Đây là **gợi ý**, không ép: thử nghiệm cho thấy ép dùng một cách dịch soạn sẵn làm sai chỗ ngữ cảnh khác.
+   * Ghi nhớ đã xét gì vào `<file dịch>_prepare.json`: chạy lại chỉ gọi API cho tên/thành ngữ mới (VD cào thêm chương). Chế độ `--stream` bỏ qua bước này vì chưa có đủ truyện.
+   * Chi phí thử (truyện 178 chương, 1 triệu chữ): khoảng $0.11 và 4-5 phút, thêm được 127 tên và 826 thành ngữ.
+4. **Dịch từng chương** bằng `deepseek-flash`, bật suy luận mức trung bình. Mỗi chương gửi kèm:
+   * tên riêng trong glossary riêng của truyện (`<file dịch>_glossary.json`) có mặt trong chương (bắt buộc dùng nguyên văn);
+   * thành ngữ trong chương: nhóm "đã có cách dịch" (đã duyệt, tuyển tay, hoặc đã dùng ở chương trước) để dùng lại, nhóm "mới" kèm gợi ý của bước chuẩn bị hoặc nghĩa tham khảo.
+5. **Học sau mỗi chương**: tên riêng mới vào `<file dịch>_glossary.json`; thành ngữ và cách dịch đã dùng thật trong bản dịch vào `<file dịch>_idioms.json` (cách dùng nhiều nhất thành cách dịch chính; mục đã duyệt không bao giờ bị đổi).
+6. **Kiểm tra** (sót chữ Hán, tên dịch sai, số đoạn) rồi **đóng gói EPUB**.
+
+Xem trước bước chuẩn bị mà không dịch: `python prepare_novel.py --raw <truyện thô> --output <file dịch>` (thêm `--no-api` để chỉ in danh sách ứng viên tên, không tốn phí). Muốn khóa cách dịch một thành ngữ: duyệt rồi chạy `python build_idiom_dictionary.py --output <file dịch> --apply-review <file kết quả>`.
+
+Chi phí thử nghiệm (chương 20-21, giờ thấp điểm): khoảng $0.028/chương, 2.5-3 phút/chương.
+
 ## ⚙️ Cấu hình nâng cao
 
 ### Cấu hình Glossary (Từ điển thuật ngữ)
-File `glossary.json` là object JSON phẳng `"Trung": "Việt"`:
+Mỗi truyện có glossary riêng đặt cạnh file dịch: `<file dịch>_glossary.json` (VD `truyen_A_raw.txt.viet_glossary.json`). Không cần tạo trước - truyện mới bắt đầu rỗng và tự học tên. Muốn định sẵn cách dịch một tên, sửa file này (hoặc truyền `--glossary <file>` để dùng file khác). File `glossary.json` ở thư mục gốc KHÔNG còn được nạp khi dịch. Định dạng là object JSON phẳng `"Trung": "Việt"`:
 ```json
 {
   "陆渊": "Lục Uyên",
@@ -217,17 +238,18 @@ File `glossary.json` là object JSON phẳng `"Trung": "Việt"`:
   "荒古圣体": "Hoang Cổ Thánh Thể"
 }
 ```
-Hệ thống tự cập nhật file này khi phát hiện tên riêng mới trong quá trình dịch.
+Glossary chỉ chứa **tên riêng** (nhân vật, địa danh, tổ chức) và bị ép dùng nguyên văn ở mọi chương. Hệ thống tự thêm tên mới model phát hiện, không bao giờ ghi đè tên đã có; mục mới phải có ít nhất 2 từ viết hoa (từ thường như "danh bạ", "giam giữ" bị bỏ để không lặp lỗi sang các chương sau).
 
 ### 📚 Từ điển Hán Việt tích hợp sẵn (MỚI)
 
-Bộ từ điển đã được merge vào `glossary.json` từ **6 nguồn open-source** + 308 seed terms thủ công:
+Bộ từ điển Hán Việt từ **6 nguồn open-source** + 308 seed terms thủ công (không còn gộp vào `glossary.json`):
 
 | File | Số entries | Mô tả |
 |------|----------:|-------|
-| `glossary.json` | **205,808** | Cụm từ Hán → Việt (format `{zh: vi}`) |
 | `dictionaries/hanviet_chars.json` | 13,192 | Chữ Hán → list âm Hán Việt (multi-reading) |
-| `dictionaries/hanviet_words.json` | 205,808 | Mirror của glossary.json |
+| `dictionaries/hanviet_words.json` | 205,808 | Cụm từ Hán → Việt (format `{zh: vi}`) |
+| `dictionaries/idioms_verified.json` | ~54,000 | Chỉ dùng để nhận diện thành ngữ trong chương |
+| `dictionaries/idioms_curated.json` | ~80 | Thành ngữ tuyển tay, dùng cho mọi truyện |
 | `dictionaries/rongmotamhon_raw.json` | 784 | Cache từ rongmotamhon.net (optional crawl) |
 | `dictionaries/xianxia_terms.py` | 308 | Seed: Tu Chân + Đô Thị + Võ Hiệp + Lịch Sử |
 
@@ -252,7 +274,7 @@ git clone --depth 1 https://github.com/ryanphung/chinese-hanviet-cognates.git
 git clone --depth 1 https://github.com/thaoshibe/chugiai-zh-en-vi.git
 git clone --depth 1 https://github.com/binhbuithithanh/hanzi-sino-vietnamese.git
 
-# Build + merge vào glossary.json
+# Build (ghi dictionaries/, merge vào glossary.json - file này không còn dùng khi dịch)
 python scripts/build_hanviet_dict.py
 
 # Verify chất lượng
@@ -261,8 +283,8 @@ python scripts/test_verify_dict.py
 
 Chi tiết license + attribution xem `dictionaries/SOURCES.md`.
 
-### Glossary Sliding Window & TTL Cleanup
-File `glossary_meta.json` (tự sinh) theo dõi tần suất:
+### Glossary meta
+File `<file dịch>_glossary_meta.json` (tự sinh) theo dõi tần suất:
 ```json
 {
   "陆渊": {"last_seen": 42, "count": 15},
@@ -270,7 +292,7 @@ File `glossary_meta.json` (tự sinh) theo dõi tần suất:
   "路人甲": {"last_seen": 5, "count": 1}
 }
 ```
-Hệ thống chỉ gửi ~50 thuật ngữ quan trọng nhất vào prompt (tiết kiệm 500-7500 tokens/chương). Các thuật ngữ lỗi thời (`count=1`, vắng bóng >100 chương) được **tự động xóa** để tránh phình file.
+Mỗi chương chỉ gửi các tên có mặt trong chương (tối đa 300). Meta của tên ít dùng (`count=1`, vắng >100 chương) được dọn, nhưng tên vẫn giữ trong glossary để tên nhân vật quay lại sau nhiều chương vẫn dịch như cũ.
 
 ### Kiểm tra offline
 
@@ -283,6 +305,8 @@ Các lệnh sau không gọi DeepSeek API:
 .venv\Scripts\python.exe test_deepseek_pipeline.py
 .venv\Scripts\python.exe test_filter_glossary.py
 .venv\Scripts\python.exe test_stray_quote_fix.py
+.venv\Scripts\python.exe test_idiom_review.py
+.venv\Scripts\python.exe test_prepare_novel.py
 
 # macOS/Linux: thay .venv\Scripts\python.exe bằng .venv/bin/python
 ```
@@ -304,6 +328,8 @@ script Python và `unittest`.
 | [deepseek_translate.py](deepseek_translate.py) | Module dịch thuật (Glossary, Style Guide, Error Handling, Balance Detection) |
 | [validator.py](validator.py) | 🆕 Module kiểm tra chất lượng bản dịch (sanity check) |
 | [build_epub.py](build_epub.py) | Module đóng gói EPUB |
+| [prepare_novel.py](prepare_novel.py) | Bước chuẩn bị trước khi dịch: lập glossary tên riêng + cách dịch thành ngữ cho cả truyện |
+| [build_idiom_dictionary.py](build_idiom_dictionary.py) | Quét thành ngữ của truyện, dịch trước (tùy chọn), áp kết quả duyệt |
 | [text_postprocess.py](text_postprocess.py) | Module hậu xử lý, chuẩn hóa chính tả tiếng Việt |
 | [novels.example.json](novels.example.json) | 🆕 File cấu hình mẫu cho multi_pipeline.py |
 | [setup_termux.sh](setup_termux.sh) | Kịch bản cài đặt tự động trên Termux |

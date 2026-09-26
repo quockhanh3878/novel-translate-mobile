@@ -9,3 +9,4 @@ urllib3==2.7.0
 ebooklib
 pillow
 cloudscraper
+opencc-python-reimplemented

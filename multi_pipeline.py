@@ -46,7 +46,7 @@ signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
 from crawler import crawl_novel
-from deepseek_translate import load_dotenv, translate_novel
+from deepseek_translate import load_dotenv, translate_novel, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
 from validator import validate_translation
 
 
@@ -70,11 +70,13 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
     raw_file = cfg.get("raw", "")
     translated_file = cfg.get("translated") or f"{raw_file}.viet.txt"
     epub_path = cfg.get("epub") or f"{title}.epub"
-    glossary = cfg.get("glossary", "glossary.json")
-    model = cfg.get("model", "deepseek-v4-flash")
+    glossary = cfg.get("glossary")  # None = glossary rieng cua truyen canh file dich
+    model = cfg.get("model", DEFAULT_MODEL)
+    reasoning_effort = cfg.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
     temperature = cfg.get("temperature", 1.3)
     workers = cfg.get("workers", 1)
     style_detect = cfg.get("style_detect", True)
+    prepare = cfg.get("prepare", True)  # buoc chuan bi glossary + thanh ngu truoc khi dich
     thinking = cfg.get("thinking", True)
     avoid_peak = cfg.get("avoid_peak", True)
     author = cfg.get("author", "Unknown")
@@ -120,6 +122,7 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
             raw_file, translated_file, glossary, api_key,
             model=model, temperature=temperature, workers=workers,
             thinking=thinking, style_detect=style_detect,
+            reasoning_effort=reasoning_effort, prepare=prepare,
             avoid_peak=avoid_peak, log=log,
             should_stop=should_stop,
             on_balance_error=on_balance_error,

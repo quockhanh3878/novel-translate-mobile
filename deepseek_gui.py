@@ -23,7 +23,8 @@ from tkinter import ttk, messagebox, filedialog
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_novel
-from deepseek_translate import load_dotenv, load_glossary, save_glossary, translate_novel
+from deepseek_translate import (load_dotenv, load_glossary, save_glossary, translate_novel,
+                                glossary_path_for)
 from build_epub import build_epub
 
 BG_COLOR = "#1e1e1e"
@@ -32,19 +33,6 @@ TEXT_COLOR = "#e0e0e0"
 ACCENT_COLOR = "#007acc"
 TEXT_MUTED = "#888888"
 
-DEFAULT_GLOSSARY_TEXT = (
-    "王八喜: Vương Bát Hỉ\n"
-    "任九贵: Nhậm Cửu Quý\n"
-    "尹白鸽: Doãn Bạch Cát\n"
-    "纪震: Kỷ Chấn\n"
-    "谢远航: Tạ Viễn Hàng\n"
-    "华登峰: Hoa Đăng Phong\n"
-    "牛再山: Ngưu Tái Sơn\n"
-    "牛松: Ngưu Tùng\n"
-    "上官: Thượng Quan\n"
-    "上官顺敏: Thượng Quan Thuận Mẫn\n"
-    "常书欣: Thường Thư Hân\n"
-)
 
 
 def glossary_to_text(glossary: dict) -> str:
@@ -165,9 +153,9 @@ class AppGUI(tk.Tk):
         opts_frame.columnconfigure((0, 1, 2), weight=1)
 
         ttk.Label(opts_frame, text="Model:").grid(row=0, column=0, sticky="w")
-        self.cbo_model = ttk.Combobox(opts_frame, values=["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat"],
+        self.cbo_model = ttk.Combobox(opts_frame, values=["deepseek-flash", "deepseek-v4-pro"],
                                        state="readonly", width=18)
-        self.cbo_model.set("deepseek-v4-flash")
+        self.cbo_model.set("deepseek-flash")
         self.cbo_model.grid(row=1, column=0, sticky="w", pady=(0, 10))
 
         ttk.Label(opts_frame, text="Số chương dịch song song:").grid(row=0, column=1, sticky="w")
@@ -201,17 +189,20 @@ class AppGUI(tk.Tk):
         right.grid(row=0, column=1, sticky="nsew")
         ttk.Label(right, text="Từ điển nhân vật & Thuật ngữ (Glossary):", style="Header.TLabel").pack(
             anchor="w", pady=(0, 10))
-        ttk.Label(right, text="Định dạng: Tên_Trung: Tên_Việt (mỗi dòng 1 từ). Lưu vào glossary.json khi bắt đầu\n"
-                               "chạy; tên nhân vật MỚI mà DeepSeek gặp trong lúc dịch sẽ được tự thêm vào đây.",
+        ttk.Label(right, text="Định dạng: Tên_Trung: Tên_Việt (mỗi dòng 1 từ). Mỗi truyện có glossary riêng\n"
+                               "cạnh file dịch, để trống cũng được: tên MỚI DeepSeek gặp khi dịch sẽ tự thêm vào.",
                   font=("Segoe UI", 9, "italic"), foreground=TEXT_MUTED).pack(anchor="w", pady=(0, 5))
         self.txt_glossary = tk.Text(right, bg="#252526", fg=TEXT_COLOR, font=("Consolas", 10), wrap="none")
         self.txt_glossary.pack(fill="both", expand=True)
         self.reload_glossary_text()
 
+    def _glossary_path(self):
+        return glossary_path_for(self.ent_translated.get().strip() or DEFAULT_OUTPUT + ".viet.txt")
+
     def reload_glossary_text(self):
-        glossary = load_glossary("glossary.json")
+        glossary = load_glossary(self._glossary_path())
         self.txt_glossary.delete(1.0, tk.END)
-        self.txt_glossary.insert(tk.END, glossary_to_text(glossary) or DEFAULT_GLOSSARY_TEXT)
+        self.txt_glossary.insert(tk.END, glossary_to_text(glossary))
 
     def setup_tab_logs(self):
         frame = ttk.Frame(self.tab_logs, padding=10)
@@ -270,7 +261,7 @@ class AppGUI(tk.Tk):
             messagebox.showerror("Lỗi", "Temperature/số worker không hợp lệ.")
             return
 
-        save_glossary("glossary.json", text_to_glossary(self.txt_glossary.get(1.0, tk.END)))
+        save_glossary(self._glossary_path(), text_to_glossary(self.txt_glossary.get(1.0, tk.END)))
 
         self.is_running = True
         self.abort_requested = False
@@ -338,7 +329,7 @@ class AppGUI(tk.Tk):
                     self.log(f"  [Lỗi EPUB] Không thể đóng gói EPUB chương {idx}: {e}")
 
             translate_novel(
-                raw_file, translated_file, "glossary.json", api_key,
+                raw_file, translated_file, glossary_path_for(translated_file), api_key,
                 model=model, temperature=temperature, workers=workers, thinking=thinking,
                 style_detect=style_detect, log=self.log, on_chapter=_on_chapter_gui,
                 should_stop=lambda: self.abort_requested, avoid_peak=avoid_peak,

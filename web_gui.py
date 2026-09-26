@@ -19,7 +19,8 @@ import requests
 from build_epub import build_epub
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
-                                call_deepseek, load_glossary, translate_chapter)
+                                call_deepseek, translate_chapter,
+                                DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
 from text_postprocess import postprocess
 
 # Load env variables on startup
@@ -79,8 +80,9 @@ def test_deepseek_key(key):
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "deepseek-chat",
+        "model": DEFAULT_MODEL,
         "messages": [{"role": "user", "content": "Hi"}],
+        "thinking": {"type": "disabled"},
         "max_tokens": 5
     }
     try:
@@ -102,12 +104,16 @@ def test_translate_handler(chinese_text: str, api_key: str) -> dict:
     """Dich doan van Trung -> Viet va xuat EPUB de kiem tra toan bo pipeline."""
     global TEST_EPUB_PATH
     try:
-        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(style_guide_block="")
+        system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
+            style_guide_block="",
+            term_categories="các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ",
+            glossary_block="")
         chapter = {"title": "Chuong thu nhat", "paragraphs": [chinese_text]}
-        glossary = load_glossary("glossary.json")
-        translated = translate_chapter(chapter, glossary, system_prompt, api_key,
-                                       model="deepseek-v4-flash", temperature=1.3,
-                                       thinking=True)
+        # Dich thu 1 doan: khong co truyen nao nen glossary rong (van bat goi y thanh ngu).
+        translated = translate_chapter(chapter, system_prompt, api_key,
+                                       model=DEFAULT_MODEL, temperature=1.3,
+                                       thinking=True, glossary={},
+                                       reasoning_effort=DEFAULT_REASONING_EFFORT)
 
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False,
                                           encoding="utf-8")
@@ -809,8 +815,16 @@ PAGE = """<!doctype html>
                     <div>
                         <label>Model dịch:</label>
                         <select name="model">
-                            <option value="deepseek-v4-flash">deepseek-v4-flash (Khuyên dùng)</option>
-                            <option value="deepseek-chat">deepseek-chat</option>
+                            <option value="deepseek-flash">deepseek-flash (Khuyên dùng)</option>
+                            <option value="deepseek-v4-pro">deepseek-v4-pro (đắt hơn ~3 lần)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Mức suy luận:</label>
+                        <select name="reasoning_effort">
+                            <option value="medium" selected>Trung bình (Khuyên dùng)</option>
+                            <option value="low">Thấp (rẻ hơn ~15%, thành ngữ kém hơn)</option>
+                            <option value="max">Tối đa (chậm, đắt)</option>
                         </select>
                     </div>
                     <div>
@@ -846,7 +860,7 @@ PAGE = """<!doctype html>
                         </div>
                         <div class="checkbox-group">
                             <input type="checkbox" name="no_thinking" id="no_thinking">
-                            <label for="no_thinking" style="display:inline;margin:0;font-weight:normal;">Tắt Thinking Mode (Không khuyến khích - có thể gây lỗi dịch)</label>
+                            <label for="no_thinking" style="display:inline;margin:0;font-weight:normal;">Tắt Thinking Mode (Không khuyến khích - thành ngữ sai nghĩa, sót chữ Hán)</label>
                         </div>
                     </div>
                 </div>
@@ -1363,7 +1377,7 @@ def sanitize_filename(name: str) -> str:
     return name or "truyen"
 
 
-def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0):
+def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
@@ -1373,6 +1387,7 @@ def run_pipeline(input_val, title, author="", model="deepseek-v4-flash", workers
     if author:
         args += ["--author", author]
     args += ["--model", model]
+    args += ["--reasoning-effort", reasoning_effort]
     args += ["--workers", str(workers)]
     args += ["--temperature", str(temperature)]
     if allow_peak:
@@ -1625,7 +1640,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         input_val = params.get("input", [""])[0].strip()
         title = params.get("title", [""])[0].strip()
         author = params.get("author", [""])[0].strip()
-        model = params.get("model", ["deepseek-v4-flash"])[0].strip()
+        model = params.get("model", [DEFAULT_MODEL])[0].strip()
+        reasoning_effort = params.get("reasoning_effort", [DEFAULT_REASONING_EFFORT])[0].strip()
+        if reasoning_effort not in REASONING_EFFORTS:
+            reasoning_effort = DEFAULT_REASONING_EFFORT
         
         try:
             workers = int(params.get("workers", ["1"])[0].strip())
@@ -1653,7 +1671,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort),
                 daemon=True
             ).start()
 

@@ -46,7 +46,8 @@ signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream
-from deepseek_translate import load_dotenv, translate_novel, translate_novel_stream, detect_style_guide
+from deepseek_translate import (load_dotenv, translate_novel, translate_novel_stream, detect_style_guide,
+                                DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
 from validator import validate_translation
 
 
@@ -75,8 +76,9 @@ def main():
     parser.add_argument("--title", required=True, help="Ten truyen (EPUB metadata + ten file EPUB)")
     parser.add_argument("--author", default="Unknown")
     parser.add_argument("--epub", default=None, help="Duong dan EPUB dau ra, mac dinh <title>.epub")
-    parser.add_argument("--glossary", default="glossary.json")
-    parser.add_argument("--model", default="deepseek-v4-flash")
+    parser.add_argument("--glossary", default=None,
+                         help="Mac dinh: glossary rieng cua truyen canh file dich (<file dich>_glossary.json)")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--temperature", type=float, default=1.3)
     parser.add_argument("--workers", type=int, default=1,
                          help="So chuong dich song song (>1 danh doi tinh nhat quan ten rieng lay toc do)")
@@ -86,9 +88,14 @@ def main():
                          help="[MOI] Che do stream: cao tung chuong roi dich ngay lap tuc, "
                               "khong cho den khi cao het. Nen dung kem --chapters X.")
     parser.add_argument("--no-style-detect", action="store_true")
+    parser.add_argument("--no-prepare", action="store_true",
+                         help="Bo qua buoc chuan bi truoc khi dich (quet ca truyen, lap glossary ten rieng "
+                              "va cach dich thanh ngu bang suy luan cao). Che do --stream luon bo qua.")
     parser.add_argument("--no-thinking", action="store_true",
-                         help="CANH BAO: tat thinking khien deepseek-v4-flash chi echo nguyen van "
-                              "dau vao, KHONG dich - xem comment trong deepseek_translate.py")
+                         help="Khong khuyen dung: da thu chuong 20-21, tat thinking dich thanh ngu "
+                              "sai nghia va sot chu Han nhieu hon han")
+    parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, default=DEFAULT_REASONING_EFFORT,
+                         help="Muc suy luan khi bat thinking (mac dinh medium, API quy ve high)")
     parser.add_argument("--env-file", default=".env")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--allow-peak", action="store_true",
@@ -200,6 +207,7 @@ def main():
             chapter_gen, translated_file, args.glossary, api_key,
             model=args.model, temperature=args.temperature,
             thinking=not args.no_thinking,
+            reasoning_effort=args.reasoning_effort,
             style_guide=style_guide,
             should_stop=lambda: _stop_flag,
             term_categories=term_categories,
@@ -225,7 +233,8 @@ def main():
         failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
                          temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
                          style_detect=not args.no_style_detect, avoid_peak=not args.allow_peak,
-                         should_stop=lambda: _stop_flag, on_chapter=_on_chapter_batch)
+                         should_stop=lambda: _stop_flag, on_chapter=_on_chapter_batch,
+                         reasoning_effort=args.reasoning_effort, prepare=not args.no_prepare)
 
     print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
     warnings = validate_translation(args.raw, translated_file)

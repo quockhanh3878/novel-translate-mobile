@@ -7,7 +7,7 @@ Chay: .venv\\Scripts\\python test_deepseek_pipeline.py
 
 import os
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 import crawler
 from deepseek_translate import (
@@ -107,6 +107,12 @@ def demo():
     assert is_peak_hour(datetime(2026, 1, 1, 14, 0, tzinfo=BEIJING_TZ)) is True
     assert is_peak_hour(datetime(2026, 1, 1, 18, 0, tzinfo=BEIJING_TZ)) is False
     assert is_peak_hour(datetime(2026, 1, 1, 22, 0, tzinfo=BEIJING_TZ)) is False  # ngoai gio
+    # Chi thu 2-6: 2026-01-03 la thu 7, 2026-01-04 chu nhat, 2026-01-05 thu 2.
+    assert is_peak_hour(datetime(2026, 1, 3, 10, 0, tzinfo=BEIJING_TZ)) is False
+    assert is_peak_hour(datetime(2026, 1, 4, 15, 0, tzinfo=BEIJING_TZ)) is False
+    assert is_peak_hour(datetime(2026, 1, 5, 10, 0, tzinfo=BEIJING_TZ)) is True
+    # Gio UTC: 01:30 UTC thu 2 = 09:30 Bac Kinh thu 2 -> cao diem.
+    assert is_peak_hour(datetime(2026, 1, 5, 1, 30, tzinfo=timezone.utc)) is True
 
     end = _peak_window_end(datetime(2026, 1, 1, 10, 30, tzinfo=BEIJING_TZ))
     assert (end.hour, end.minute) == (12, 0), end
