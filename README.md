@@ -9,7 +9,7 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * 🕷️ **Cào truyện thông minh**: Tự động lấy nội dung từ URL chương nguồn. Tích hợp thời gian chờ lịch sự (delay 1-5 giây) giúp tránh bị máy chủ chặn IP (Anti-scraping bypass).
 * 🤖 **Dịch thuật AI chất lượng cao**: Kết nối trực tiếp tới API DeepSeek (`deepseek-v4-flash`, `deepseek-chat`,...) với Prompt được tinh chỉnh tối ưu cho dịch thuật văn học Trung-Việt.
 * 📖 **Đồng bộ Thuật ngữ thông minh (Smart Glossary + Sliding Window)**: Tự động phân tích thể loại truyện (Tiên hiệp, Đô thị...) để trích xuất **đúng các danh mục từ vựng đặc thù** (công pháp, cảnh giới, tên công ty, v.v.). Hệ thống theo dõi tần suất và thời gian gần nhất của mỗi thuật ngữ, chỉ gửi ~50 thuật ngữ quan trọng nhất vào context window. File `glossary_meta.json` được tự động **làm sạch (TTL Cleanup)** định kỳ sau mỗi batch — các thuật ngữ `count=1` và vắng bóng quá 100 chương sẽ bị xóa để tránh phình file.
-* ⚡ **Tối ưu DeepSeek Context Caching (MỚI)**: Tự động sắp xếp (sort) và đưa toàn bộ Glossary vào System Prompt, giữ tiền tố (prefix) bất biến giữa các chương để kích hoạt Context Cache Hit 100% (chỉ miss khi có từ mới). Giảm chi phí token xuống 10 lần và tăng tốc độ nhả chữ (TTFT) xuống mức mili-giây.
+* ⚡ **Tối ưu DeepSeek Context Caching (MỚI)**: Glossary được sắp xếp ổn định và lọc theo cửa sổ trượt, chỉ gửi tối đa khoảng 50 thuật ngữ quan trọng vào prompt. Cách này giữ phần prompt dùng chung ổn định giữa các chương và giảm lượng token phải gửi; tỷ lệ cache hit thực tế phụ thuộc vào API và nội dung từng request.
 * 🇻🇳 **Từ điển Ca dao Tục ngữ Tiếng Việt thuần (MỚI)**: Hệ thống được nạp sẵn gần 100 câu thành ngữ kinh điển kèm theo luồng lệnh (prompt rule) ép buộc AI phải dịch thoát nghĩa thành ngữ sang câu Tiếng Việt tương đương, tuyệt đối không lạm dụng âm Hán Việt gây khó hiểu (vd: "Nhất tiễn song điêu" -> "Một mũi tên trúng hai đích").
 * ✍️ **Đồng bộ Văn phong định kỳ (Style Re-analyze)**: Tự động phân tích văn phong từ 5 chương trải đều đầu/giữa/cuối khi bắt đầu. Đối với truyện dài 1000+ chương, **tự động tái phân tích lại sau mỗi 200 chương** để bắt kịp sự thay đổi văn phong giữa các arc truyện.
 * 🛡️ **Xử lý lỗi & Tối ưu API bền bỉ (Robust Architecture)**:
@@ -121,9 +121,12 @@ pip install -r requirements.txt
 
 #### Cách 1: Web GUI (Trực quan)
 ```bash
-python web_gui.py
+python app.py
 ```
 Mở trình duyệt: [http://localhost:8000](http://localhost:8000)
+
+Có thể chạy trực tiếp `python web_gui.py` với cùng địa chỉ nếu cần bỏ qua
+entrypoint tương thích `app.py`.
 
 #### Cách 2: CLI Pipeline (1 truyện)
 ```bash
@@ -144,8 +147,11 @@ python pipeline.py --raw "truyen_tho.txt" --title "Tên Truyện"
 | `--stream` | — | **[MỚI]** Kích hoạt chế độ Stream: cào xong chương nào, dịch ngay chương đó |
 | `--no-style-detect` | — | Bỏ qua nhận diện văn phong |
 | `--allow-peak` | — | Cho phép dịch trong giờ cao điểm |
+| `--no-thinking` | — | Tắt reasoning; chỉ dùng khi chấp nhận chất lượng có thể giảm |
+| `--env-file` | `.env` | File chứa `DEEPSEEK_API_KEY` |
+| `--api-key` | — | Truyền API key trực tiếp cho một lần chạy |
 
-#### Cách 4: Stream Mode — Cào và Dịch Đồng Thời 🆕
+#### Cách 3: Stream Mode — Cào và Dịch Đồng Thời 🆕
 Thay vì cào hết toàn bộ truyện rồi mới dịch, chế độ này cào từng chương và **dịch ngay lập tức** sau khi cào xong mỗi chương. Phù hợp khi bạn chỉ muốn dịch thử một số chương đầu hoặc muốn nhận bản dịch sớm nhất có thể.
 
 ```bash
@@ -166,8 +172,9 @@ python pipeline.py \
 **Lưu ý:**
 * File `.txt` thô và file `.viet.txt` đều được ghi tăng dần sau mỗi chương, hỗ trợ **Resume** đầy đủ nếu bị ngắt giữa chừng.
 * Style Guide được phân tích trước từ chương đầu rồi áp dụng cho toàn bộ phiên dịch stream.
+* Thành ngữ có trong `dictionaries/idioms_verified.json` được đánh dấu và tiền xử lý trước khi gọi API để tránh dịch lại sai nghĩa.
 
-#### Cách 3: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
+#### Cách 4: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
 Dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON:
 
 **Bước 1:** Tạo file `novels.json` (xem mẫu tại `novels.example.json`):
@@ -264,6 +271,24 @@ File `glossary_meta.json` (tự sinh) theo dõi tần suất:
 }
 ```
 Hệ thống chỉ gửi ~50 thuật ngữ quan trọng nhất vào prompt (tiết kiệm 500-7500 tokens/chương). Các thuật ngữ lỗi thời (`count=1`, vắng bóng >100 chương) được **tự động xóa** để tránh phình file.
+
+### Kiểm tra offline
+
+Các lệnh sau không gọi DeepSeek API:
+
+```bash
+# Windows
+.venv\Scripts\python.exe scripts/test_verify_dict.py
+.venv\Scripts\python.exe test_cache_hit.py
+.venv\Scripts\python.exe test_deepseek_pipeline.py
+.venv\Scripts\python.exe test_filter_glossary.py
+.venv\Scripts\python.exe test_stray_quote_fix.py
+
+# macOS/Linux: thay .venv\Scripts\python.exe bằng .venv/bin/python
+```
+
+`pytest` không phải dependency bắt buộc của project; các kiểm tra hiện có dùng
+script Python và `unittest`.
 
 ---
 
