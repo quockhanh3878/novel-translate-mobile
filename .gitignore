@@ -10,3 +10,19 @@ model/
 
 # Exclude Old backup directory
 Old/
+
+# Playwright MCP cache (transient browser session logs)
+.playwright-mcp/
+
+# Local tooling and runtime output
+.commandcode/
+.pytest_cache/
+*.log
+*.err
+*.pyc
+
+# Local audit images
+ui-audit*.png
+
+# Glossary backups (kept locally for safety, regenerate via build_hanviet_dict.py)
+glossary.json.bak.*

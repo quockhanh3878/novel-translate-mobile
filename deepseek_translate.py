@@ -158,19 +158,53 @@ Yeu cau bat buoc:
 1. Dich tu nhien, dung van phong da xac dinh o tren, loi thoai song dong, khong dich
    tung chu mot cach may moc.
 2. ĐỐI VỚI THÀNH NGỮ, TỤC NGỮ: Bắt buộc phải tìm câu tương đương trong tiếng Việt thuần để dịch (VD: 'nhất tiễn song điêu' -> 'một mũi tên trúng hai đích'). TUYỆT ĐỐI KHÔNG để nguyên âm Hán Việt gây khó hiểu. Nếu không có câu tương đương, hãy dịch thoát nghĩa.
-3. Dung CHINH XAC ban thuat ngu (glossary) duoc cung cap o cuoi prompt cho ten nhan vat/dia danh/
+3. KHI GAP PHAN TEXT NAM GIUA 2 KY TU \u200B (zero-width space): phan do da duoc pre-translate
+   tu nguon ben ngoai (dictionary). GIU NGUYEN, KHONG sua, KHONG dich lai. Coi phan do la "ban dich co dinh".
+4. Dung CHINH XAC ban thuat ngu (glossary) duoc cung cap o cuoi prompt cho ten nhan vat/dia danh/
    thuat ngu rieng, ap dung xuyen suot de dam bao tinh nhat quan giua cac chuong.
-4. Neu gap ten nhan vat/dia danh, va {term_categories} CHUA co trong glossary, hay CHON MOT
+5. Neu gap ten nhan vat/dia danh, va {term_categories} CHUA co trong glossary, hay CHON MOT
    CACH DICH CO DINH duy nhat cho no va liet ke vao truong "new_terms" de dung lai
    cho cac chuong sau - khong duoc dich cung mot ten theo nhieu cach khac nhau.
-5. Giu nguyen so luong doan van dung bang so luong trong "paragraphs" dau vao,
+6. Giu nguyen so luong doan van dung bang so luong trong "paragraphs" dau vao,
    KHONG gop, KHONG tach, KHONG bo sot doan nao.
-6. Khong them loi binh, khong them chu thich, khong dich thua noi dung khong co.
-7. Dau ra phai la VAN BAN THUAN (plain text) cho tung doan, KHONG dung markdown,
+7. Khong them loi binh, khong them chu thich, khong dich thua noi dung khong co.
+8. Dau ra phai la VAN BAN THUAN (plain text) cho tung doan, KHONG dung markdown,
    KHONG dung the HTML - vi ban dich se duoc dong goi thang vao EPUB.
-8. Tra loi DUY NHAT bang JSON hop le theo dung schema:
+9. Tra loi DUY NHAT bang JSON hop le theo dung schema:
    {{"title": "tieu de da dich", "paragraphs": ["doan 1 da dich", ...],
      "new_terms": {{"tu_trung_moi": "tu_viet_co_dinh"}}}}
+
+Vi du cach dich thanh ngu (THAM KHAO - ap dung cho cac thanh ngu moi khong co trong glossary):
+  守株待兔 = canh gốc cây đợi thỏ (nghĩa bóng: chờ thời cơ mà không nỗ lực)
+  画蛇添足 = vẽ rắn thêm chân (nghĩa bóng: làm thừa, thêm việc không cần thiết)
+  对牛弹琴 = đàn trước bò (nghĩa bóng: nói/giảng cho người không hiểu)
+  井底之蛙 = ếch đáy giếng (nghĩa bóng: tầm nhìn hẹp hòi)
+  塞翁失马 = ông lão mất ngựa (nghĩa bóng: may rủi khó lường, họa phúc bất thường)
+  班门弄斧 = múa rìu trước cửa Lỗ Ban (nghĩa bóng: khoe tài trước bậc thầy)
+  刻舟求剑 = khắc thuyền tìm kiếm (nghĩa bóng: cứng nhắc, không biết thay đổi theo hoàn cảnh)
+  滥竽充数 = trộn lẫn để đội lốt (nghĩa bóng: lấy đồ giả lấp vào chỗ trống)
+  亡羊补牢 = mất bò mới lo sửa chuồng (nghĩa bóng: đã muộn vẫn còn hơn không)
+  守口如瓶 = giữ miệng như bình đậy kín (nghĩa bóng: giữ bí mật tuyệt đối)
+  入乡随俗 = vào làng theo tục làng (nghĩa bóng: thích nghi với phong tục địa phương)
+  笑里藏刀 = cười mà dao giấu trong (nghĩa bóng: bề ngoài tốt mà bên trong độc ác)
+  盲人摸象 = người mù sờ voi (nghĩa bóng: đánh giá một phần mà tưởng toàn cảnh)
+  半途而废 = bỏ dở giữa chừng (nghĩa bóng: không kiên trì đến cùng)
+  一箭双雕 = một mũi tên trúng hai đích (nghĩa bóng: một công đôi việc)
+  虎头蛇尾 = đầu hổ đuôi rắn (nghĩa bóng: khởi đầu oai phong, kết thúc nhạt nhẽo)
+  鹤立鸡群 = hạc đứng giữa bầy gà (nghĩa bóng: xuất sắc giữa đám đông bình thường)
+  自相矛盾 = tự mâu thuẫn với mình
+  朝三暮四 = buổi sáng ba buổi tối bốn (nghĩa bóng: thay đổi ý kiến liên tục, thiếu nhất quán)
+  草木皆兵 = cỏ cây đều là binh (nghĩa bóng: sợ hãi thái quá, hoang tưởng)
+
+Vi du cach dich tho (THAM KHAO - giu y nghia va chat tho):
+  床前明月光 = truoc giuong anh trang sang
+  疑是地上霜 = ngo ngang tuyet phu giam
+  举头望明月 = ngoc dau nhin trang sang
+  低头思故乡 = cuc dau nho que huong
+  (=> dich nghia: Truoc giuong, anh trang sang, ngo ngang tuyet giam; Ngoi day nhin trang, cui dau nho que huong.)
+
+  天生我材必有用 = Troi sinh ta, nhat dinh co cho dung.
+  千金散尽还复来 = Nghin vang tieu tan, lai co ngay tro lai.
 
 Viec dich TIEU DE CHUONG:
 - Neu tieu de goc co chua so chuong (vi du: "第1章", "第01章", "第十一回"...), bat buoc phai giu lai va dich dong nhat sang tieng Viet theo dinh dang "Chương X: [Ten chuong]" (vi du: "Chương 1: Dai bien hoat nhan").
@@ -497,7 +531,22 @@ def build_user_prompt(chapter: dict) -> str:
 
 def translate_chapter(chapter: dict, system_prompt: str, api_key: str,
                        model: str, temperature: float, thinking: bool = True,
-                       should_stop=None, chapter_idx: int | None = None) -> dict:
+                       should_stop=None, chapter_idx: int | None = None,
+                       pre_translate_idioms: bool = True) -> dict:
+    # Pre-translate chengyu/thanh ngu truoc khi goi API (chat luong cao, 0 token them)
+    if pre_translate_idioms:
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _scripts_dir = str(_Path(__file__).resolve().parent / "scripts")
+            if _scripts_dir not in _sys.path:
+                _sys.path.insert(0, _scripts_dir)
+            from pre_translate_idioms import pre_translate_chapter as _pre_translate, load_idioms as _load_idioms
+            idiom_data = _load_idioms()
+            if idiom_data["idioms"]:
+                chapter = _pre_translate(chapter, idiom_data)
+        except (ImportError, FileNotFoundError, ModuleNotFoundError):
+            pass  # Neu file khong ton tai, bo qua (backward compat)
     user_prompt = build_user_prompt(chapter)
     # max_tokens la tran chung cho CA reasoning_content LAN content khi thinking bat -
     # da kiem chung thuc te: voi 16384, 1 chuong ~70 doan bi reasoning "an" het tran
@@ -510,7 +559,9 @@ def translate_chapter(chapter: dict, system_prompt: str, api_key: str,
         title = f"Chương {chapter_idx}"
     else:
         title = postprocess_title(result.get("title", "")) if result.get("title") else chapter["title"]
-    paragraphs = [postprocess(p) for p in result.get("paragraphs", []) if p and p.strip()]
+    # Strip zero-width space markers (sau khi DeepSeek tra ve - co the con sot)
+    raw_paragraphs = [p for p in result.get("paragraphs", []) if p and p.strip()]
+    paragraphs = [postprocess(p).replace("\u200B", "") for p in raw_paragraphs]
     new_terms = {}
     extracted_terms = result.get("new_terms") or result.get("new_names") or {}
     if isinstance(extracted_terms, dict):

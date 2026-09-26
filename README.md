@@ -43,13 +43,29 @@ cd ~/novel && bash update_termux.sh
 ```
 *(Script sẽ tự động diệt tiến trình cũ, cập nhật code và tự mở lại trình duyệt phiên bản mới nhất)*
 
-### 3. Khởi chạy thủ công
+`update_termux.sh` dùng `git fetch` và `git reset --hard origin/main`. Hãy sao lưu
+các thay đổi cục bộ trước khi chạy vì các thay đổi chưa commit trong thư mục
+`~/novel` sẽ bị ghi đè.
+
+### 3. Thiết lập Termux trên điện thoại Realme
+
+Để Realme không dừng Termux khi dịch truyện dài:
+
+1. Vào Cài đặt > Ứng dụng > Termux > Pin và chọn Không hạn chế.
+2. Bật Tự khởi động cho Termux nếu máy có mục này.
+3. Khóa Termux trong màn hình ứng dụng gần đây.
+4. Khi chạy chương dài, giữ Termux ở cửa sổ nổi hoặc chia đôi màn hình nếu hệ thống vẫn dừng tiến trình nền.
+
+Tên menu có thể khác giữa các phiên bản realme UI. Sau khi cập nhật mã, mở lại
+Termux hoặc chạy lại `bash update_termux.sh` để khởi động Web GUI trên bản mới.
+
+### 4. Khởi chạy thủ công
 ```bash
 cd ~/novel && python web_gui.py
 ```
 Sau đó truy cập: [http://localhost:8000](http://localhost:8000)
 
-### 4. Quản lý tiến trình & Lấy file khi bị ngắt giữa chừng
+### 5. Quản lý tiến trình & Lấy file khi bị ngắt giữa chừng
 * **Tự động khôi phục (Resume):** Chỉ cần khởi động lại tác vụ — script tự nhận diện chương đã lưu và dịch tiếp.
 * **Kiểm tra tiến trình chạy ẩn:**
   ```bash
@@ -63,7 +79,7 @@ Sau đó truy cập: [http://localhost:8000](http://localhost:8000)
   cp ~/novel/*.epub /sdcard/Download/
   ```
 
-### 5. Khắc phục lỗi Termux bị đóng đột ngột (Killed in background)
+### 6. Khắc phục lỗi Termux bị đóng đột ngột (Killed in background)
 Khi chờ hết giờ cao điểm hoặc dịch truyện quá dài, Android có thể tự động giết Termux để tiết kiệm pin hoặc giải phóng RAM. Hãy thiết lập 3 bước sau:
 1. **Tắt tối ưu pin (Bắt buộc):** Vào Cài đặt máy > Ứng dụng > Termux > Pin > Đổi thành **Không hạn chế (Unrestricted)**.
 2. **Khoá ứng dụng (Lock App):** Mở giao diện đa nhiệm (Recent Apps), ấn giữ vào Termux và chọn biểu tượng Ổ khoá.
@@ -86,6 +102,9 @@ python -m venv .venv
 
 pip install -r requirements.txt
 ```
+
+Ứng dụng hiện chạy qua DeepSeek API. `app.py` là entrypoint tương thích để mở
+Web GUI API-only; không cần đặt model ONNX cục bộ.
 
 Tạo file `.env` và điền API Key:
 ```env
@@ -193,6 +212,48 @@ File `glossary.json` là object JSON phẳng `"Trung": "Việt"`:
 ```
 Hệ thống tự cập nhật file này khi phát hiện tên riêng mới trong quá trình dịch.
 
+### 📚 Từ điển Hán Việt tích hợp sẵn (MỚI)
+
+Bộ từ điển đã được merge vào `glossary.json` từ **6 nguồn open-source** + 308 seed terms thủ công:
+
+| File | Số entries | Mô tả |
+|------|----------:|-------|
+| `glossary.json` | **205,808** | Cụm từ Hán → Việt (format `{zh: vi}`) |
+| `dictionaries/hanviet_chars.json` | 13,192 | Chữ Hán → list âm Hán Việt (multi-reading) |
+| `dictionaries/hanviet_words.json` | 205,808 | Mirror của glossary.json |
+| `dictionaries/rongmotamhon_raw.json` | 784 | Cache từ rongmotamhon.net (optional crawl) |
+| `dictionaries/xianxia_terms.py` | 308 | Seed: Tu Chân + Đô Thị + Võ Hiệp + Lịch Sử |
+
+**Các nguồn:**
+- `ph0ngp/CVDICT` (CC BY-SA 4.0) - 120K entries - dịch Việt từ CC-CEDICT
+- `ph0ngp/hanviet-pinyin-wordlist` (MIT) - 10.5K chữ Hán multi-reading
+- `ryanphung/chinese-hanviet-cognates` - 5K từ phổ biến + 107K cụm từ trong `vietphrases.txt`
+- `thaoshibe/chugiai-zh-en-vi` (CC BY-SA 4.0) - CVDICT dạng JSON
+- `binhbuithithanh/hanzi-sino-vietnamese` (CC BY 4.0) - 768 chữ HSK
+- `rongmotamhon.net` (Liên Phật Hội) - Từ điển Thiều Chửu, Trần Văn Chánh, Nguyễn Quốc Hùng
+
+**Coverage: 97.1%** trên 200+ test cases (chữ Hán thường gặp + thuật ngữ Tu Chân + nhân vật lịch sử).
+
+**Cập nhật/Build lại từ điển:**
+```bash
+# Clone các nguồn (chỉ cần làm 1 lần)
+mkdir -p C:\Users\quock\AppData\Local\Temp\opencode\dict-sources
+cd C:\Users\quock\AppData\Local\Temp\opencode\dict-sources
+git clone --depth 1 https://github.com/ph0ngp/CVDICT.git
+git clone --depth 1 https://github.com/ph0ngp/hanviet-pinyin-wordlist.git
+git clone --depth 1 https://github.com/ryanphung/chinese-hanviet-cognates.git
+git clone --depth 1 https://github.com/thaoshibe/chugiai-zh-en-vi.git
+git clone --depth 1 https://github.com/binhbuithithanh/hanzi-sino-vietnamese.git
+
+# Build + merge vào glossary.json
+python scripts/build_hanviet_dict.py
+
+# Verify chất lượng
+python scripts/test_verify_dict.py
+```
+
+Chi tiết license + attribution xem `dictionaries/SOURCES.md`.
+
 ### Glossary Sliding Window & TTL Cleanup
 File `glossary_meta.json` (tự sinh) theo dõi tần suất:
 ```json
@@ -211,6 +272,7 @@ Hệ thống chỉ gửi ~50 thuật ngữ quan trọng nhất vào prompt (ti�
 | File | Chức năng |
 |---|---|
 | [web_gui.py](web_gui.py) | Giao diện Web GUI (chọn file, dịch thử, nút Dừng) |
+| [app.py](app.py) | Entrypoint tương thích, khởi động Web GUI API-only |
 | [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB |
 | [multi_pipeline.py](multi_pipeline.py) | 🆕 Pipeline đa truyện song song với balance detection |
 | [crawler.py](crawler.py) | Module cào dữ liệu từ web |
@@ -221,8 +283,17 @@ Hệ thống chỉ gửi ~50 thuật ngữ quan trọng nhất vào prompt (ti�
 | [novels.example.json](novels.example.json) | 🆕 File cấu hình mẫu cho multi_pipeline.py |
 | [setup_termux.sh](setup_termux.sh) | Kịch bản cài đặt tự động trên Termux |
 | [run_termux.sh](run_termux.sh) | Kịch bản khởi chạy nhanh / Widget Android |
+| [dictionaries/](dictionaries/) | 🆕 Từ điển Hán Việt tích hợp (205K từ + 13K chữ) |
+| [scripts/build_hanviet_dict.py](scripts/build_hanviet_dict.py) | 🆕 Build từ điển từ 6 nguồn open-source |
+| [scripts/crawl_rongmotamhon.py](scripts/crawl_rongmotamhon.py) | 🆕 Crawler từ rongmotamhon.net (optional) |
+| [scripts/test_verify_dict.py](scripts/test_verify_dict.py) | 🆕 Verify chất lượng từ điển |
+| [scripts/pre_translate_idioms.py](scripts/pre_translate_idioms.py) | Pre-translate thành ngữ trước khi gọi API |
 
 ---
 
 ## 📄 Giấy phép
 Dự án được phân phối dưới giấy phép MIT License. Xem chi tiết tại file [LICENSE](LICENSE).
+
+**Từ điển Hán Việt tích hợp:** kết hợp từ nhiều nguồn với license khác nhau
+(CC BY-SA 4.0, MIT, CC BY 4.0). Xem chi tiết attribution tại
+[dictionaries/SOURCES.md](dictionaries/SOURCES.md).
