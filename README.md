@@ -144,8 +144,8 @@ python pipeline.py --raw "truyen_tho.txt" --title "Tên Truyện"
 | `--reasoning-effort` | `medium` | Mức suy luận: `low` / `medium` / `high` / `max` (API quy `medium` về `high`) |
 | `--workers` | `1` | Số luồng dịch song song (>1 có thể làm mất nhất quán tên riêng) |
 | `--temperature` | `1.3` | Độ sáng tạo khi dịch |
-| `--chapters` | `0` | Giới hạn số chương cần cào/dịch (0 = toàn bộ) |
-| `--stream` | — | **[MỚI]** Kích hoạt chế độ Stream: cào xong chương nào, dịch ngay chương đó |
+| `--chapters` | `0` | Số chương mới cần dịch từ chương 1, bỏ qua chương đã dịch (0 = đến hết) |
+| `--stream` | — | Kích hoạt chế độ dịch theo số chương chưa dịch |
 | `--no-style-detect` | — | Bỏ qua nhận diện văn phong |
 | `--no-prepare` | — | Bỏ qua bước chuẩn bị (quét cả truyện lập glossary tên + cách dịch thành ngữ trước khi dịch) |
 | `--allow-peak` | — | Cho phép dịch trong giờ cao điểm |
@@ -153,18 +153,18 @@ python pipeline.py --raw "truyen_tho.txt" --title "Tên Truyện"
 | `--env-file` | `.env` | File chứa `DEEPSEEK_API_KEY` |
 | `--api-key` | — | Truyền API key trực tiếp cho một lần chạy |
 
-#### Cách 3: Stream Mode — Cào và Dịch Đồng Thời 🆕
-Thay vì cào hết toàn bộ truyện rồi mới dịch, chế độ này cào từng chương và **dịch ngay lập tức** sau khi cào xong mỗi chương. Phù hợp khi bạn chỉ muốn dịch thử một số chương đầu hoặc muốn nhận bản dịch sớm nhất có thể.
+#### Cách 3: Dịch theo số chương chưa dịch
+Chế độ này quét từ chương 1, bỏ qua các chương đã có trong file dịch và dừng sau số chương mới được dịch theo `--chapters`. Khi chưa có dữ liệu thô, chương mới vẫn được cào và dịch từng chương.
 
 ```bash
-# Cào và dịch ngay 20 chương đầu từ link:
+# Dịch thêm 20 chương chưa dịch, bắt đầu quét từ chương 1:
 python pipeline.py \
     --start-url "https://example.com/truyen_1.html" \
     --title "Tên Truyện" \
     --stream \
     --chapters 20
 
-# Không giới hạn (cào và dịch toàn bộ đồng thời):
+# Không giới hạn (dịch đến hết):
 python pipeline.py \
     --start-url "https://example.com/truyen_1.html" \
     --title "Tên Truyện" \
@@ -173,8 +173,9 @@ python pipeline.py \
 
 **Lưu ý:**
 * File `.txt` thô và file `.viet.txt` đều được ghi tăng dần sau mỗi chương, hỗ trợ **Resume** đầy đủ nếu bị ngắt giữa chừng.
-* Style Guide được phân tích trước từ chương đầu rồi áp dụng cho toàn bộ phiên dịch stream.
-* Stream Mode dùng cùng từ điển thành ngữ riêng của truyện như chế độ thường.
+* Khi nhập URL trên giao diện, file thô mới dùng tên ổn định lấy từ URL; đổi tên truyện không tạo file cào mới. File cũ theo cách đặt tên bằng tiêu đề vẫn được dùng lại nếu còn tồn tại.
+* Style Guide được phân tích trước từ chương đầu rồi áp dụng cho toàn bộ phiên dịch.
+* Chế độ này dùng cùng từ điển thành ngữ riêng của truyện như chế độ thường.
 
 #### Cách 4: Multi-Novel Pipeline (Nhiều truyện song song) 🆕
 Dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON:
@@ -205,6 +206,37 @@ python multi_pipeline.py --config novels.json
 * Chia sẻ tín hiệu `balance_empty_event` chung — khi **bất kỳ truyện nào** gặp lỗi hết token API, **tất cả đều dừng ngay lập tức**.
 * Cuối cùng in bảng tổng kết trạng thái từng truyện.
 * Chạy lại lệnh cũ để **Resume** từ đúng chương bị dở, không tốn phí dịch lại.
+
+### 4. Bản đóng gói Windows (.exe)
+
+Không cần cài Python: giải nén cả thư mục `NovelTranslator`, bấm đúp `NovelTranslator.exe`. Trình duyệt tự mở giao diện
+tại `http://127.0.0.1:8000` (đổi cổng nếu bận). Dữ liệu (`.env`, truyện thô, bản dịch, EPUB) nằm trong thư mục
+`DuLieu` cạnh file `.exe`; muốn đổi nơi lưu thì đặt biến môi trường `NOVEL_DATA_DIR`. Nút "Thoát ứng dụng" ở cuối
+trang (hoặc đóng cửa sổ đen) sẽ tắt ứng dụng và dừng luôn tiến trình dịch đang chạy.
+Khi chuyển giữa `python app.py` và bản `.exe`, hãy chép `DuLieu` cũ sang cạnh file EXE mới; hai chế độ
+không tự dùng chung thư mục dữ liệu.
+
+Tự build bản đóng gói (cần Python 3.8+ trên Windows):
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+```
+Kết quả: `dist\NovelTranslator\` và `dist\NovelTranslator-<phiên bản>-win64.zip`. Script tạo venv sạch trong `build\venv`,
+chạy PyInstaller theo `packaging/novel_translator.spec`, rồi chạy `NovelTranslator.exe --selftest` (kiểm tra thư viện, từ điển,
+giao diện, nhận diện ngày lễ Trung Quốc, tạo EPUB) và chỉ tạo zip khi selftest PASS. Phiên bản lấy từ `version.py`.
+
+Giao diện web nằm trong `web/` (`index.html`, `app.css`, `app.js`, font Plus Jakarta Sans có sẵn nên chạy được khi
+không có mạng). Server mặc định chỉ nghe `127.0.0.1`; đặt `NOVEL_GUI_HOST=0.0.0.0` nếu thật sự cần mở cho máy khác
+trong mạng (lưu ý `/get_key` trả về API key).
+
+### 5. Nguồn truyện và ước tính chi phí
+
+* **Nguồn truyện:** link chương dạng `..._<số>.html` (cào tuần tự như trước) hoặc link sách của `uukanshu.cc`
+  (`https://uukanshu.cc/book/<id>/`, đọc danh sách chương từ mục lục, chữ phồn thể, chạy tiếp được khi bị dừng giữa chừng).
+  Bộ đọc riêng cho từng trang nằm trong `sources.py`; trang trả về thử thách chống bot (403/429) thì dừng, không vượt.
+* **Ước tính chi phí dịch toàn bộ:** `python cost_estimate.py <file_thô.txt> [--translated <file_dịch>]`, hoặc xem ngay dưới ô chọn
+  nguồn trên giao diện (file `.txt`, hoặc link uukanshu: đọc mục lục và 2 chương mẫu). Công thức: số ký tự nguồn nhân đơn giá đo thật
+  trên `deepseek-flash` suy luận medium (khoảng 3,9 - 5,7 phần triệu USD mỗi ký tự, trung bình 4,4), gấp đôi nếu gọi API trong giờ cao điểm.
+  Hệ số cho mức suy luận khác và model khác là giả định chưa đo. Trong lúc dịch, giao diện hiện số tiền đã tiêu tính từ dòng `[usage]`.
 
 ---
 
@@ -323,6 +355,11 @@ script Python và `unittest`.
 | File | Chức năng |
 |---|---|
 | [web_gui.py](web_gui.py) | Giao diện Web GUI (chọn file, dịch thử, nút Dừng) |
+| [web/](web/) | Giao diện (HTML, CSS, JS, font) do web_gui.py phục vụ |
+| [sources.py](sources.py) | Bộ đọc riêng từng trang truyện (hiện có uukanshu.cc) |
+| [cost_estimate.py](cost_estimate.py) | Ước tính / tính tiền dịch theo ký tự và token |
+| [launcher.py](launcher.py) | Điểm vào bản đóng gói .exe (mở GUI, `--selftest`, tiến trình con `--worker`) |
+| [packaging/](packaging/) | Script build Windows (PyInstaller), icon, hướng dẫn người dùng |
 | [app.py](app.py) | Entrypoint tương thích, khởi động Web GUI API-only |
 | [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB |
 | [multi_pipeline.py](multi_pipeline.py) | 🆕 Pipeline đa truyện song song với balance detection |

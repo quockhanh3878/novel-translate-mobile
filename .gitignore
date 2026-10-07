@@ -29,3 +29,7 @@ ui-audit*.png
 
 # Glossary backups (kept locally for safety, regenerate via build_hanviet_dict.py)
 glossary.json.bak.*
+
+# Dong goi Windows (packaging/build_windows.ps1)
+build/
+dist/

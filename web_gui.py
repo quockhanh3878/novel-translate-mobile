@@ -2,6 +2,8 @@
 chay pipeline.py (cao -> dich DeepSeek API -> dong goi EPUB) tu trinh duyet dien thoai.
 
 Chay: python web_gui.py roi mo http://localhost:8000
+Giao dien nam trong thu muc web/ (index.html, app.css, app.js, fonts/).
+Mac dinh chi nghe tren 127.0.0.1; dat NOVEL_GUI_HOST=0.0.0.0 neu muon mo cho may khac trong mang.
 """
 import http.server
 import json
@@ -9,19 +11,27 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import traceback
 import urllib.parse
 import tempfile
+from pathlib import Path
 
 import requests
 
 from build_epub import build_epub
+from cost_estimate import estimate_catalog, estimate_file, usd_from_usage
+from sources import find_adapter
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 call_deepseek, translate_chapter,
-                                DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
+                                DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS,
+                                is_peak_hour)
 from text_postprocess import postprocess
+from version import __version__
+
+DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 
 # Load env variables on startup
 load_dotenv()
@@ -100,6 +110,44 @@ def test_deepseek_key(key):
         return False, f"Lỗi kết nối: {e}"
 
 
+def get_deepseek_balance(key=""):
+    key = (key or os.environ.get("DEEPSEEK_API_KEY", "")).strip()
+    if not key:
+        return {"available": False, "reason": "Chưa có API Key."}
+
+    try:
+        resp = requests.get(
+            DEEPSEEK_BALANCE_URL,
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return {"available": False, "reason": f"Không lấy được số dư (mã {resp.status_code})."}
+        data = resp.json()
+        if not isinstance(data, dict):
+            return {"available": False, "reason": "DeepSeek trả về dữ liệu số dư không hợp lệ."}
+        infos = data.get("balance_infos")
+        if not isinstance(infos, list):
+            return {"available": False, "reason": "DeepSeek trả về dữ liệu số dư không hợp lệ."}
+        safe_infos = []
+        for info in infos:
+            if not isinstance(info, dict):
+                continue
+            safe_infos.append({
+                "currency": str(info.get("currency", "")),
+                "total_balance": str(info.get("total_balance", "0")),
+                "granted_balance": str(info.get("granted_balance", "0")),
+                "topped_up_balance": str(info.get("topped_up_balance", "0")),
+            })
+        return {
+            "available": True,
+            "is_available": bool(data.get("is_available")),
+            "balance_infos": safe_infos,
+        }
+    except (requests.RequestException, ValueError) as exc:
+        return {"available": False, "reason": f"Không kết nối được để lấy số dư: {exc}"}
+
+
 def test_translate_handler(chinese_text: str, api_key: str) -> dict:
     """Dich doan van Trung -> Viet va xuat EPUB de kiem tra toan bo pipeline."""
     global TEST_EPUB_PATH
@@ -127,7 +175,7 @@ def test_translate_handler(chinese_text: str, api_key: str) -> dict:
             if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
                 os.remove(TEST_EPUB_PATH)
 
-            epub_file = "test_dung_thu.epub"
+            epub_file = TEST_EPUB_NAME
             build_epub(tmp.name, epub_file, "Truyen dung thu", "DeepSeek API")
             TEST_EPUB_PATH = os.path.abspath(epub_file)
 
@@ -155,1206 +203,39 @@ STATE = {
     "stop_requested": False,  # dat truoc khi CURRENT_PROC ton tai van phai duoc ton trong
     "error_detail": "",       # traceback/duoi log day du de nguoi dung copy di fix
     "raw_file": "",           # file tho dang dung cho lan chay hien tai (de ro rang)
-    "translated_file": ""
+    "translated_file": "",
+    "cost_spent": 0.0,
+    "cost_model": DEFAULT_MODEL,
+    "allow_peak": False,
 }
 LOCK = threading.Lock()
 CURRENT_PROC = None
 TEST_EPUB_PATH = None  # duong dan file EPUB dung thu vua tao
+TEST_EPUB_NAME = "test_dung_thu.epub"
 UPLOAD_DIR = "uploads"  # noi luu file da cao nguoi dung chon tu may
 
-PAGE = """<!doctype html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>Trình dịch Truyện DeepSeek</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-gradient: radial-gradient(circle at top, #1e2235 0%, #0d0f17 100%);
-            --glass-bg: rgba(22, 28, 45, 0.6);
-            --glass-border: rgba(255, 255, 255, 0.08);
-            --text-main: #e2e8f0;
-            --text-muted: #94a3b8;
-            --accent-cyan: #00f2fe;
-            --accent-blue: #4facfe;
-            --accent-green: #10b981;
-            --accent-red: #f43f5e;
-            --btn-start-grad: linear-gradient(135deg, #00b4db 0%, #0083b0 100%);
-            --btn-stop-grad: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
-        }
-        body {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            background: var(--bg-gradient);
-            color: var(--text-main);
-            margin: 0;
-            min-height: 100vh;
-            padding: 20px;
-            padding-top: max(20px, env(safe-area-inset-top));
-            padding-bottom: max(20px, env(safe-area-inset-bottom));
-            padding-left: max(20px, env(safe-area-inset-left));
-            padding-right: max(20px, env(safe-area-inset-right));
-            box-sizing: border-box;
-        }
-        .container {
-            max-width: 600px;
-            margin: 40px auto;
-            padding: 32px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-        }
-        h2 {
-            font-size: 28px;
-            font-weight: 700;
-            text-align: center;
-            margin-top: 0;
-            margin-bottom: 24px;
-            background: linear-gradient(135deg, var(--accent-cyan) 0%, var(--accent-blue) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: -0.5px;
-        }
-        .subtitle {
-            text-align: center;
-            font-size: 14px;
-            color: var(--text-muted);
-            margin-top: -20px;
-            margin-bottom: 30px;
-        }
-        label {
-            display: block;
-            font-size: 14px;
-            font-weight: 600;
-            color: #cbd5e1;
-            margin-top: 12px;
-        }
-        input, select {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 12px 16px;
-            margin: 6px 0 16px 0;
-            background: rgba(10, 12, 22, 0.5);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #fff;
-            font-size: 15px;
-            border-radius: 10px;
-            transition: all 0.3s ease;
-            font-family: inherit;
-        }
-        input:focus, select:focus {
-            outline: none;
-            border-color: var(--accent-cyan);
-            box-shadow: 0 0 12px rgba(0, 242, 254, 0.2);
-            background: rgba(10, 12, 22, 0.8);
-        }
-        details {
-            margin-bottom: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.01);
-            overflow: hidden;
-        }
-        summary {
-            padding: 12px 16px;
-            font-weight: 600;
-            cursor: pointer;
-            color: var(--text-muted);
-            user-select: none;
-            transition: color 0.2s ease;
-            outline: none;
-        }
-        summary:hover {
-            color: var(--accent-cyan);
-        }
-        .advanced-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            padding: 16px;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
-            background: rgba(0, 0, 0, 0.15);
-        }
-        .col-span-2 {
-            grid-column: span 2;
-        }
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 8px 0;
-            color: #cbd5e1;
-            font-size: 14px;
-        }
-        .checkbox-group input {
-            width: auto;
-            margin: 0;
-            cursor: pointer;
-            height: 18px;
-            width: 18px;
-            accent-color: var(--accent-cyan);
-        }
-        .btn-group {
-            display: flex;
-            gap: 12px;
-            margin-top: 20px;
-        }
-        button {
-            flex: 1;
-            padding: 14px;
-            font-size: 16px;
-            font-weight: 700;
-            border-radius: 10px;
-            border: none;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-family: inherit;
-        }
-        #btn-start {
-            background: var(--btn-start-grad);
-            color: #fff;
-            box-shadow: 0 4px 15px rgba(0, 180, 219, 0.3);
-        }
-        #btn-start:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 180, 219, 0.5);
-        }
-        #btn-start:active:not(:disabled) {
-            transform: translateY(0);
-        }
-        #btn-start:disabled {
-            background: #334155;
-            color: #64748b;
-            box-shadow: none;
-            cursor: not-allowed;
-        }
-        #btn-stop {
-            background: var(--btn-stop-grad);
-            color: #fff;
-            box-shadow: 0 4px 15px rgba(244, 63, 94, 0.3);
-            display: none;
-        }
-        #btn-stop:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(244, 63, 94, 0.5);
-        }
-        #btn-stop:active {
-            transform: translateY(0);
-        }
-        .steps {
-            display: flex;
-            justify-content: space-between;
-            margin: 24px 0;
-            position: relative;
-        }
-        .steps::before {
-            content: '';
-            position: absolute;
-            top: 16px;
-            left: 8%;
-            right: 8%;
-            height: 2px;
-            background: #334155;
-            z-index: 1;
-        }
-        .step {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            z-index: 2;
-            font-size: 11px;
-            color: #64748b;
-            font-weight: 600;
-            width: 25%;
-            text-align: center;
-        }
-        .step-dot {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: #1e293b;
-            border: 2px solid #334155;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 8px;
-            font-weight: 700;
-            font-size: 13px;
-            transition: all 0.3s ease;
-            color: #64748b;
-        }
-        .step.active {
-            color: var(--accent-cyan);
-        }
-        .step.active .step-dot {
-            background: #0d1e2d;
-            border-color: var(--accent-cyan);
-            box-shadow: 0 0 15px rgba(0, 242, 254, 0.6);
-            color: var(--accent-cyan);
-            animation: pulse 2s infinite;
-        }
-        .step.completed {
-            color: var(--accent-green);
-        }
-        .step.completed .step-dot {
-            background: var(--accent-green);
-            border-color: var(--accent-green);
-            color: #fff;
-        }
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(0, 242, 254, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(0, 242, 254, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(0, 242, 254, 0); }
-        }
-        .progress-container {
-            margin: 24px 0;
-            display: none;
-        }
-        .progress-info {
-            display: flex;
-            justify-content: space-between;
-            font-size: 13px;
-            margin-bottom: 8px;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-        .progress-bar-bg {
-            width: 100%;
-            height: 8px;
-            background: #1e293b;
-            border-radius: 4px;
-            overflow: hidden;
-        }
-        .progress-bar {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
-            box-shadow: 0 0 8px rgba(0, 242, 254, 0.4);
-            border-radius: 4px;
-            transition: width 0.4s ease;
-        }
-        .result-box {
-            margin-top: 24px;
-            padding: 16px;
-            border-radius: 10px;
-            font-size: 14px;
-            font-weight: 600;
-            display: none;
-            text-align: center;
-        }
-        .result-box.success {
-            display: block;
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            color: #34d399;
-        }
-        .result-box.error {
-            display: block;
-            background: rgba(244, 63, 94, 0.1);
-            border: 1px solid rgba(244, 63, 94, 0.2);
-            color: #f87171;
-        }
-        .console-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 28px;
-            margin-bottom: 8px;
-            color: var(--text-muted);
-            font-size: 13px;
-            font-weight: 600;
-        }
-        .console-controls {
-            display: flex;
-            gap: 8px;
-        }
-        .console-btn {
-            background: transparent;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            color: var(--text-muted);
-            padding: 4px 10px;
-            font-size: 11px;
-            border-radius: 5px;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-weight: 600;
-        }
-        .console-btn:hover {
-            background: rgba(255, 255, 255, 0.05);
-            color: #fff;
-            border-color: rgba(255, 255, 255, 0.3);
-        }
-        .console-btn.active {
-            background: rgba(0, 242, 254, 0.1);
-            color: var(--accent-cyan);
-            border-color: rgba(0, 242, 254, 0.3);
-        }
-        pre {
-            margin: 0;
-            white-space: pre-wrap;
-            background: #060810;
-            color: #38bdf8;
-            padding: 16px;
-            border-radius: 12px;
-            max-height: 250px;
-            overflow-y: auto;
-            font-size: 12px;
-            font-family: 'Fira Code', 'Courier New', monospace;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            line-height: 1.6;
-        }
-        .modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal-box {
-            background: #161c2d;
-            border: 1px solid var(--glass-border);
-            border-radius: 16px;
-            padding: 28px;
-            width: 90%;
-            max-width: 500px;
-            max-height: 85vh;
-            overflow-y: auto;
-        }
-        .modal-box h3 {
-            margin-top: 0;
-            font-size: 18px;
-            color: var(--accent-cyan);
-        }
-        .modal-box textarea {
-            width: 100%;
-            min-height: 100px;
-            background: rgba(10, 12, 22, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            color: #fff;
-            font-size: 14px;
-            padding: 10px;
-            resize: vertical;
-            font-family: inherit;
-            box-sizing: border-box;
-        }
-        .modal-box textarea:focus {
-            outline: none;
-            border-color: var(--accent-cyan);
-        }
-        .modal-btn-row {
-            display: flex;
-            gap: 10px;
-            margin-top: 14px;
-        }
-        .modal-btn {
-            flex: 1;
-            padding: 10px;
-            border-radius: 8px;
-            border: none;
-            font-weight: 700;
-            font-size: 14px;
-            cursor: pointer;
-            font-family: inherit;
-        }
-        .modal-btn.primary { background: var(--btn-start-grad); color: #fff; }
-        .modal-btn.secondary { background: rgba(255,255,255,0.08); color: #cbd5e1; border: 1px solid var(--glass-border); }
-        .modal-result {
-            margin-top: 14px;
-            padding: 12px;
-            border-radius: 8px;
-            font-size: 13px;
-            display: none;
-            line-height: 1.6;
-            word-break: break-word;
-        }
-        .modal-result.success {
-            display: block;
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            color: #34d399;
-        }
-        .modal-result.error {
-            display: block;
-            background: rgba(244, 63, 94, 0.1);
-            border: 1px solid rgba(244, 63, 94, 0.2);
-            color: #f87171;
-        }
-        .modal-result a {
-            color: var(--accent-cyan);
-            text-decoration: underline;
-        }
+WEB_DIR = Path(__file__).resolve().parent / "web"
+ASSET_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".svg": "image/svg+xml",
+}
+# Launcher (.exe) gan ham tat server vao day de nut "Thoat ung dung" hoat dong.
+SHUTDOWN_HOOK = None
 
-        /* ===== Mobile Portrait Optimizations ===== */
-        .api-key-form {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-top: 6px;
-        }
-        .api-key-form input {
-            margin: 0;
-            flex: 1;
-            min-width: 0;
-        }
-        .api-key-actions {
-            display: flex;
-            gap: 8px;
-            flex-shrink: 0;
-        }
-        .api-key-actions button {
-            min-width: 0;
-            flex: 0 0 auto;
-        }
-        .file-upload-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: -10px 0 16px 0;
-        }
-        .checkbox-group input[type="checkbox"] {
-            min-width: 18px;
-            min-height: 18px;
-        }
 
-        @media (max-width: 480px) {
-            body {
-                padding: 12px;
-                padding-top: max(12px, env(safe-area-inset-top));
-                padding-bottom: max(12px, env(safe-area-inset-bottom));
-            }
-            .container {
-                margin: 8px auto;
-                padding: 18px 14px;
-                border-radius: 14px;
-            }
-            h2 {
-                font-size: 22px;
-                margin-bottom: 16px;
-            }
-            .subtitle {
-                font-size: 12px;
-                margin-top: -14px;
-                margin-bottom: 20px;
-            }
-            label {
-                font-size: 13px;
-                margin-top: 10px;
-            }
-            input, select {
-                padding: 11px 14px;
-                font-size: 14px;
-                border-radius: 8px;
-            }
-            button {
-                padding: 13px;
-                font-size: 15px;
-                min-height: 44px;
-            }
-            .api-key-form {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            .api-key-actions {
-                flex-wrap: wrap;
-            }
-            .api-key-actions button {
-                flex: 1 1 calc(50% - 4px);
-                min-height: 44px;
-                padding: 11px 8px;
-                font-size: 13px;
-            }
-            .file-upload-row {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 6px;
-            }
-            .advanced-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
-                padding: 12px;
-            }
-            .col-span-2 {
-                grid-column: span 1;
-            }
-            .btn-group {
-                gap: 8px;
-                margin-top: 16px;
-            }
-            .btn-group button {
-                padding: 13px;
-            }
-            .steps {
-                margin: 18px 0;
-            }
-            .step {
-                font-size: 10px;
-            }
-            .step-dot {
-                width: 28px;
-                height: 28px;
-                font-size: 12px;
-                margin-bottom: 6px;
-            }
-            pre {
-                padding: 12px;
-                font-size: 11px;
-                max-height: 200px;
-                border-radius: 10px;
-            }
-            .modal-overlay {
-                align-items: flex-end;
-            }
-            .modal-box {
-                width: 100%;
-                max-width: 100%;
-                border-radius: 16px 16px 0 0;
-                max-height: 80vh;
-                padding: 20px 16px;
-                padding-bottom: max(20px, env(safe-area-inset-bottom));
-            }
-            .modal-box h3 {
-                font-size: 16px;
-            }
-            .modal-box textarea {
-                min-height: 80px;
-                font-size: 14px;
-            }
-            .modal-btn {
-                padding: 12px;
-                min-height: 44px;
-                font-size: 14px;
-            }
-            .result-box {
-                font-size: 13px;
-                padding: 12px;
-                border-radius: 8px;
-            }
-            .console-header {
-                margin-top: 20px;
-            }
-            .error-report pre {
-                max-height: 150px;
-            }
-        }
+def _web_file(rel: str):
+    """Duong dan file tren giao dien trong web/, hoac None neu khong hop le (chong ../)."""
+    try:
+        path = (WEB_DIR / rel).resolve()
+        path.relative_to(WEB_DIR.resolve())
+    except (ValueError, OSError):
+        return None
+    if path.suffix.lower() not in ASSET_TYPES and path.name != "index.html":
+        return None
+    return path if path.is_file() else None
 
-        @media (max-width: 360px) {
-            .container {
-                margin: 4px auto;
-                padding: 14px 10px;
-            }
-            h2 {
-                font-size: 20px;
-            }
-            .api-key-actions button {
-                flex: 1 1 100%;
-            }
-            .step {
-                font-size: 9px;
-            }
-            .step-dot {
-                width: 24px;
-                height: 24px;
-                font-size: 11px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>DỊCH TRUYỆN NOVEL</h2>
-        <div class="subtitle">Hệ thống dịch thuật tự động sử dụng DeepSeek API<br><span style="color: var(--accent-cyan); font-size: 13px;">Tích hợp Context Caching Siêu Tốc & Từ điển Thành Ngữ Thuần Việt</span></div>
-        
-        <div id="key-warning" class="result-box error" style="display: none; margin-top: 0; margin-bottom: 20px; font-weight: normal; text-align: left;">
-            ⚠️ <strong>Thiếu DEEPSEEK_API_KEY:</strong> Vui lòng nhập API Key xuống ô bên dưới và nhấn <strong>Lưu Key</strong> để bắt đầu sử dụng dịch thuật DeepSeek.
-        </div>
-
-        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); padding: 16px; border-radius: 12px; margin-bottom: 24px;">
-            <label style="margin-top: 0;">DeepSeek API Key (sk-...):</label>
-            <form onsubmit="return false;" class="api-key-form">
-                <input type="password" autocomplete="off" id="api_key_input" placeholder="Nhập sk-...">
-                <div class="api-key-actions">
-                    <button type="button" id="btn-save-key" style="background: var(--btn-start-grad); color: white; border-radius: 10px; font-weight: 700; border: none; cursor: pointer;">Lưu Key</button>
-                    <button type="button" id="btn-test-key" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: white; border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Test Key</button>
-                    <button type="button" id="btn-test-translate" style="background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.3); color: var(--accent-cyan); border-radius: 10px; font-weight: 700; cursor: pointer; transition: all 0.2s;">Dịch thử</button>
-                </div>
-            </form>
-            <div style="display:flex; align-items:center; gap:8px; margin-top: 8px;">
-                <div id="key-status" style="font-size: 12px; color: var(--text-muted); flex:1;">Đang kiểm tra API Key...</div>
-                <button type="button" id="btn-copy-key-error" class="console-btn" style="display:none; flex:0 0 auto;">📋 Copy lỗi</button>
-            </div>
-        </div>
-        
-        <form id="f">
-            <label>Nguồn truyện:</label>
-            <input name="input" id="input_source" placeholder="URL chương 1 (ví dụ: ..._1.html) hoặc đường dẫn file .txt thô" required>
-            <div class="file-upload-row">
-                <label for="raw_file_input" style="margin:0; flex:0 0 auto; font-weight:500; font-size:13px; color:var(--text-muted); cursor:pointer; text-decoration:underline;">Hoặc chọn file đã cào sẵn từ máy...</label>
-                <input type="file" id="raw_file_input" accept=".txt,text/plain" style="display:none;">
-            </div>
-            <div id="raw_file_status" style="font-size:12px; margin: -12px 0 16px 0; color: var(--text-muted); display:none;"></div>
-
-            <label>Tên truyện (để trống sẽ tự đoán từ URL):</label>
-            <input name="title" placeholder="Ví dụ: Đệ Tam Trùng Nhân Cách">
-            
-            <details>
-                <summary>⚙️ Cấu hình nâng cao</summary>
-                <div class="advanced-grid">
-                    <div>
-                        <label>Tác giả:</label>
-                        <input name="author" placeholder="Ví dụ: Thường Thư Hân">
-                    </div>
-                    <div>
-                        <label>Model dịch:</label>
-                        <select name="model">
-                            <option value="deepseek-flash">deepseek-flash (Khuyên dùng)</option>
-                            <option value="deepseek-v4-pro">deepseek-v4-pro (đắt hơn ~3 lần)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label>Mức suy luận:</label>
-                        <select name="reasoning_effort">
-                            <option value="medium" selected>Trung bình (Khuyên dùng)</option>
-                            <option value="low">Thấp (rẻ hơn ~15%, thành ngữ kém hơn)</option>
-                            <option value="max">Tối đa (chậm, đắt)</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label>Số luồng dịch song song (Workers):</label>
-                        <input type="number" name="workers" min="1" max="10" value="1">
-                    </div>
-                    <div>
-                        <label>Độ sáng tạo (Temperature):</label>
-                        <input type="number" name="temperature" step="0.1" min="0.0" max="2.0" value="1.3">
-                    </div>
-
-                    <div class="col-span-2" style="background: rgba(0,242,254,0.04); border: 1px solid rgba(0,242,254,0.15); border-radius: 10px; padding: 12px 14px; margin-bottom:4px;">
-                        <div class="checkbox-group" style="margin-bottom:4px;">
-                            <input type="checkbox" name="stream_mode" id="stream_mode">
-                            <label for="stream_mode" style="display:inline;margin:0;font-weight:600;color:var(--accent-cyan);">⚡ Stream Mode: Cào xong chương nào, dịch ngay chương đó</label>
-                        </div>
-                        <p style="font-size:12px; color:var(--text-muted); margin: 4px 0 8px 16px;">Không cần chờ cào hết toàn bộ truyện. Phù hợp khi muốn đọc sớm.</p>
-                        <div id="stream-chapters-row" style="display:none; align-items:center; gap:10px; margin-left:16px;">
-                            <label style="margin:0; font-size:13px; white-space:nowrap;">Giới hạn số chương:</label>
-                            <input type="number" name="chapters" id="chapters_input" min="1" max="9999" value="20" style="margin:0; width:90px; flex:0 0 auto;">
-                            <span style="font-size:12px; color:var(--text-muted);">(0 = toàn bộ)</span>
-                        </div>
-                    </div>
-
-                    <div class="col-span-2">
-                        <div class="checkbox-group">
-                            <input type="checkbox" name="allow_peak" id="allow_peak">
-                            <label for="allow_peak" style="display:inline;margin:0;font-weight:normal;">Cho phép dịch trong giờ cao điểm (Giá gấp đôi)</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" name="no_style_detect" id="no_style_detect">
-                            <label for="no_style_detect" style="display:inline;margin:0;font-weight:normal;">Không tự động phân tích văn phong (nhiều chương)</label>
-                        </div>
-                        <div class="checkbox-group">
-                            <input type="checkbox" name="no_thinking" id="no_thinking">
-                            <label for="no_thinking" style="display:inline;margin:0;font-weight:normal;">Tắt Thinking Mode (Không khuyến khích - thành ngữ sai nghĩa, sót chữ Hán)</label>
-                        </div>
-                    </div>
-                </div>
-            </details>
-            
-            <details>
-                <summary>💡 Hướng dẫn Termux & Khắc phục sự cố</summary>
-                <div style="padding: 16px; border-top: 1px solid rgba(255, 255, 255, 0.05); background: rgba(0, 0, 0, 0.15); font-size: 13px; line-height: 1.6; color: var(--text-main);">
-                    <div style="margin-bottom: 12px;">
-                        <strong style="color: var(--accent-cyan);">⏯️ Tự động khôi phục (Resume):</strong>
-                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Hệ thống hỗ trợ resume tự động. Nếu cào/dịch bị dừng giữa chừng (mất mạng, tắt app...), bạn chỉ cần nhập lại thông tin cũ và chạy lại, tiến trình sẽ tự động tiếp tục từ chương dang dở.</p>
-                    </div>
-                    <div style="margin-bottom: 12px;">
-                        <strong style="color: var(--accent-cyan);">🔍 Kiểm tra tiến trình chạy ẩn:</strong>
-                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Mở cửa sổ Termux mới và nhập lệnh để kiểm tra xem Python có chạy ẩn không:</p>
-                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">ps -ef | grep python</code>
-                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Xem nhật ký log chương mới nhất:</p>
-                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">tail -n 20 ~/novel/pipeline_*.log</code>
-                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Tắt cưỡng bức tiến trình chạy ẩn:</p>
-                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">pkill -f python</code>
-                    </div>
-                    <div>
-                        <strong style="color: var(--accent-cyan);">📁 Vị trí lưu file & Lấy sách EPUB:</strong>
-                        <p style="margin: 4px 0 0 0; color: var(--text-muted);">Mọi file lưu trong thư mục <code style="color:#e2e8f0; font-family:monospace;">~/novel</code>. Để đưa file EPUB ra thư mục Download của điện thoại, nhập lệnh:</p>
-                        <code style="display:block; background:#060810; padding:6px 10px; border-radius:6px; margin:4px 0; color:#38bdf8; font-family:monospace;">cp ~/novel/*.epub /sdcard/Download/</code>
-                    </div>
-                </div>
-            </details>
-            
-            <div class="btn-group">
-                <button type="submit" id="btn-start">Bắt đầu dịch</button>
-                <button type="button" id="btn-stop">Dừng lại</button>
-            </div>
-        </form>
-        
-        <div class="steps" id="step-indicator">
-            <div class="step" id="step-crawl">
-                <div class="step-dot">1</div>
-                Cào truyện
-            </div>
-            <div class="step" id="step-translate">
-                <div class="step-dot">2</div>
-                Dịch thuật
-            </div>
-            <div class="step" id="step-validate">
-                <div class="step-dot">3</div>
-                Kiểm tra
-            </div>
-            <div class="step" id="step-done">
-                <div class="step-dot">✓</div>
-                Hoàn tất
-            </div>
-        </div>
-        
-        <div class="progress-container" id="progress-area">
-            <div class="progress-info">
-                <span id="progress-text">Đang dịch...</span>
-                <span id="progress-percent">0%</span>
-            </div>
-            <div class="progress-bar-bg">
-                <div class="progress-bar" id="progress-bar"></div>
-            </div>
-            <div id="file-info" style="font-size:11px; color:var(--text-muted); margin-top:8px; font-family:'Fira Code', monospace; word-break:break-all;"></div>
-        </div>
-
-        <div class="result-box" id="result"></div>
-
-        <div class="error-report" id="error-report" style="display:none; margin-top:12px; padding:14px; border-radius:10px; background:rgba(244,63,94,0.06); border:1px solid rgba(244,63,94,0.25);">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:12px; font-weight:700; color:var(--accent-red);">CHI TIẾT LỖI</span>
-                <button class="console-btn" id="btn-copy-error">📋 Copy báo cáo lỗi</button>
-            </div>
-            <pre id="error-detail-text" style="max-height:180px; color:#fca5a5;"></pre>
-        </div>
-
-        <div class="console-header">
-            <span>CONSOLE LOGS</span>
-            <div class="console-controls">
-                <button class="console-btn active" id="btn-scroll">Auto Scroll: ON</button>
-                <button class="console-btn" id="btn-copy">Copy Logs</button>
-            </div>
-        </div>
-        <pre id="log"></pre>
-    </div>
-    
-    <div class="modal-overlay" id="test-modal">
-        <div class="modal-box">
-            <h3>Dịch thử đoạn văn</h3>
-            <p style="font-size:13px; color:var(--text-muted); margin-top:0;">Nhập đoạn văn Trung Quốc ngắn, hệ thống sẽ dịch sang Việt và xuất file EPUB để kiểm tra.</p>
-            <textarea id="test-text" placeholder="Nhập văn bản tiếng Trung...">叶秋坐在电脑前，看着屏幕上闪烁的光标，手指轻轻敲击着键盘。窗外的阳光透过窗帘的缝隙洒进来，在地板上画出一道金色的光线。他深吸一口气，开始敲下第一行字。</textarea>
-            <div class="modal-btn-row">
-                <button class="modal-btn primary" id="btn-run-test">Dịch &amp; tạo EPUB</button>
-                <button class="modal-btn secondary" id="btn-close-modal">Đóng</button>
-            </div>
-            <div class="modal-result" id="test-result"></div>
-            <button class="console-btn" id="btn-copy-test-error" style="display:none; margin-top:10px;">📋 Copy lỗi để fix</button>
-        </div>
-    </div>
-    
-    <script>
-        const f = document.getElementById('f');
-        const btnStart = document.getElementById('btn-start');
-        const btnStop = document.getElementById('btn-stop');
-        const logEl = document.getElementById('log');
-        const resultEl = document.getElementById('result');
-        const progressArea = document.getElementById('progress-area');
-        const progressBar = document.getElementById('progress-bar');
-        const progressText = document.getElementById('progress-text');
-        const progressPercent = document.getElementById('progress-percent');
-        const btnScroll = document.getElementById('btn-scroll');
-        const btnCopy = document.getElementById('btn-copy');
-        const fileInfo = document.getElementById('file-info');
-        const errorReport = document.getElementById('error-report');
-        const errorDetailText = document.getElementById('error-detail-text');
-        const btnCopyError = document.getElementById('btn-copy-error');
-        let lastStatus = {};
-
-        function copyWithFeedback(btn, text) {
-            navigator.clipboard.writeText(text);
-            const original = btn.textContent;
-            btn.textContent = 'Đã copy!';
-            setTimeout(() => btn.textContent = original, 1500);
-        }
-
-        btnCopyError.onclick = () => {
-            const report = [
-                `Bước lỗi: ${lastStatus.step || '(không rõ)'}`,
-                `Lỗi: ${lastStatus.error || '(không rõ)'}`,
-                `File thô: ${lastStatus.raw_file || '(không có)'}`,
-                '',
-                'Chi tiết (log/traceback):',
-                lastStatus.error_detail || '(không có)'
-            ].join('\\n');
-            copyWithFeedback(btnCopyError, report);
-        };
-
-        let autoScroll = true;
-        let pollTimeout = null;
-        
-        const apiKeyInput = document.getElementById('api_key_input');
-        const btnSaveKey = document.getElementById('btn-save-key');
-        const btnTestKey = document.getElementById('btn-test-key');
-        const keyStatus = document.getElementById('key-status');
-        const keyWarning = document.getElementById('key-warning');
-        const btnCopyKeyError = document.getElementById('btn-copy-key-error');
-        let lastKeyError = '';
-
-        function setKeyStatus(ok, message) {
-            keyStatus.textContent = (ok ? "✓ " : "✗ ") + message;
-            keyStatus.style.color = ok ? "var(--accent-green)" : "var(--accent-red)";
-            lastKeyError = ok ? '' : message;
-            btnCopyKeyError.style.display = ok ? 'none' : 'inline-block';
-        }
-
-        btnCopyKeyError.onclick = () => copyWithFeedback(btnCopyKeyError, lastKeyError);
-
-        btnTestKey.onclick = async () => {
-            const key = apiKeyInput.value.trim();
-            if (!key) {
-                alert("Vui lòng nhập API Key trước khi test.");
-                return;
-            }
-            btnTestKey.disabled = true;
-            btnTestKey.textContent = "Đang test...";
-            setKeyStatus(true, "Đang kết nối tới DeepSeek API để kiểm tra...");
-            keyStatus.style.color = "var(--text-muted)";
-
-            try {
-                const params = new URLSearchParams();
-                params.append("key", key);
-                const r = await fetch('/test_key', { method: 'POST', body: params });
-                const data = await r.json();
-                setKeyStatus(data.success, data.message);
-            } catch (err) {
-                console.error(err);
-                setKeyStatus(false, "Lỗi kết nối khi kiểm tra Key: " + err.message);
-            } finally {
-                btnTestKey.disabled = false;
-                btnTestKey.textContent = "Test Key";
-            }
-        };
-
-        btnSaveKey.onclick = async () => {
-            const key = apiKeyInput.value.trim();
-            if (!key) {
-                alert("Vui lòng nhập API Key.");
-                return;
-            }
-            btnSaveKey.disabled = true;
-            btnSaveKey.textContent = "Đang lưu...";
-            try {
-                const params = new URLSearchParams();
-                params.append("key", key);
-                const r = await fetch('/save_key', { method: 'POST', body: params });
-                if (r.ok) {
-                    setKeyStatus(true, "Đã lưu API Key thành công!");
-                    keyWarning.style.display = "none";
-                } else {
-                    setKeyStatus(false, "Không thể lưu API Key.");
-                }
-            } catch (err) {
-                console.error(err);
-                setKeyStatus(false, "Lỗi kết nối khi lưu: " + err.message);
-            } finally {
-                btnSaveKey.disabled = false;
-                btnSaveKey.textContent = "Lưu Key";
-            }
-        };
-
-        async function checkKey() {
-            try {
-                const r = await fetch('/get_key');
-                const data = await r.json();
-                if (data.key) {
-                    apiKeyInput.value = data.key;
-                    keyStatus.textContent = "✓ Đã nạp API Key từ hệ thống.";
-                    keyStatus.style.color = "var(--accent-green)";
-                    keyWarning.style.display = "none";
-                } else {
-                    keyStatus.textContent = "✗ Chưa cấu hình API Key (chưa có trong .env)";
-                    keyStatus.style.color = "var(--accent-red)";
-                    keyWarning.style.display = "block";
-                }
-            } catch (err) {
-                console.error("Check key error:", err);
-            }
-        }
-        checkKey();
-
-        const rawFileInput = document.getElementById('raw_file_input');
-        const rawFileStatus = document.getElementById('raw_file_status');
-        const inputSource = document.getElementById('input_source');
-
-        rawFileInput.onchange = async () => {
-            const file = rawFileInput.files[0];
-            if (!file) return;
-            rawFileStatus.style.display = 'block';
-            rawFileStatus.textContent = 'Đang tải file lên...';
-            rawFileStatus.style.color = 'var(--text-muted)';
-            try {
-                const text = await file.text();
-                const r = await fetch('/upload_raw?name=' + encodeURIComponent(file.name), {
-                    method: 'POST', body: text
-                });
-                const data = await r.json();
-                if (data.success) {
-                    inputSource.value = data.path;
-                    rawFileStatus.textContent = '✓ Đã chọn file: ' + data.path;
-                    rawFileStatus.style.color = 'var(--accent-green)';
-                } else {
-                    rawFileStatus.textContent = '✗ ' + (data.message || 'Lỗi tải file.');
-                    rawFileStatus.style.color = 'var(--accent-red)';
-                }
-            } catch (err) {
-                rawFileStatus.textContent = '✗ Lỗi tải file: ' + err.message;
-                rawFileStatus.style.color = 'var(--accent-red)';
-            }
-        };
-
-        const testModal = document.getElementById('test-modal');
-        const btnTestTranslate = document.getElementById('btn-test-translate');
-        const btnRunTest = document.getElementById('btn-run-test');
-        const btnCloseModal = document.getElementById('btn-close-modal');
-        const testText = document.getElementById('test-text');
-        const testResult = document.getElementById('test-result');
-        const btnCopyTestError = document.getElementById('btn-copy-test-error');
-        let lastTestError = '';
-
-        btnTestTranslate.onclick = () => {
-            testModal.classList.add('active');
-            testResult.className = 'modal-result';
-            btnCopyTestError.style.display = 'none';
-        };
-
-        btnCopyTestError.onclick = () => copyWithFeedback(btnCopyTestError, lastTestError);
-
-        btnCloseModal.onclick = () => {
-            testModal.classList.remove('active');
-        };
-
-        testModal.onclick = (e) => {
-            if (e.target === testModal) testModal.classList.remove('active');
-        };
-
-        btnRunTest.onclick = async () => {
-            const text = testText.value.trim();
-            if (!text) {
-                alert("Vui lòng nhập đoạn văn bản tiếng Trung.");
-                return;
-            }
-            btnRunTest.disabled = true;
-            btnRunTest.textContent = "Đang dịch...";
-            testResult.className = 'modal-result';
-
-            try {
-                const params = new URLSearchParams();
-                params.append("text", text);
-                const r = await fetch('/test_translate', { method: 'POST', body: params });
-                const data = await r.json();
-                if (data.success) {
-                    testResult.innerHTML = "✓ <strong>Dịch thành công!</strong><br><br>"
-                        + "<em>" + data.translated_text.substring(0, 300) + (data.translated_text.length > 300 ? "..." : "") + "</em><br><br>"
-                        + '<a href="/download_test" download>📥 Tải file EPUB</a>';
-                    testResult.className = 'modal-result success';
-                    btnCopyTestError.style.display = 'none';
-                } else {
-                    testResult.textContent = "✗ " + data.message;
-                    testResult.className = 'modal-result error';
-                    lastTestError = data.message + (data.detail ? "\\n\\n" + data.detail : "");
-                    btnCopyTestError.style.display = 'inline-block';
-                }
-            } catch (err) {
-                testResult.textContent = "✗ Lỗi kết nối: " + err.message;
-                testResult.className = 'modal-result error';
-                lastTestError = "Lỗi kết nối: " + err.message;
-                btnCopyTestError.style.display = 'inline-block';
-            } finally {
-                btnRunTest.disabled = false;
-                btnRunTest.textContent = "Dịch & tạo EPUB";
-            }
-        };
-
-        btnScroll.onclick = () => {
-            autoScroll = !autoScroll;
-            btnScroll.textContent = 'Auto Scroll: ' + (autoScroll ? 'ON' : 'OFF');
-            btnScroll.classList.toggle('active', autoScroll);
-        };
-        
-        btnCopy.onclick = () => {
-            navigator.clipboard.writeText(logEl.textContent);
-            const originalText = btnCopy.textContent;
-            btnCopy.textContent = 'Copied!';
-            setTimeout(() => btnCopy.textContent = originalText, 1500);
-        };
-        
-        f.onsubmit = async (e) => {
-            e.preventDefault();
-            resultEl.className = 'result-box';
-            
-            const formData = new FormData(f);
-            const params = new URLSearchParams();
-            
-            for (const [key, value] of formData.entries()) {
-                params.append(key, value);
-            }
-            
-            await fetch('/', { method: 'POST', body: params });
-            if (pollTimeout) clearTimeout(pollTimeout);
-            poll();
-        };
-        
-        btnStop.onclick = async () => {
-            btnStop.disabled = true;
-            await fetch('/stop', { method: 'POST' });
-        };
-        
-        // Stream Mode toggle
-        const streamModeCheck = document.getElementById('stream_mode');
-        const streamChaptersRow = document.getElementById('stream-chapters-row');
-        streamModeCheck.onchange = () => {
-            streamChaptersRow.style.display = streamModeCheck.checked ? 'flex' : 'none';
-        };
-
-        function updateSteps(currentStep, isStream) {
-            const steps = isStream
-                ? ['streaming', 'streaming', 'validating', 'done']
-                : ['crawling', 'translating', 'validating', 'done'];
-            const stepIds = [
-                'step-crawl', 'step-translate', 'step-validate', 'step-done'
-            ];
-            const stateToIdx = isStream
-                ? { 'streaming': 0, 'validating': 2, 'packaging': 2, 'done': 3 }
-                : { 'crawling': 0, 'translating': 1, 'validating': 2, 'packaging': 2, 'done': 3 };
-
-            // Reset stream label
-            const crawlDot = document.querySelector('#step-crawl .step-dot');
-            const crawlLabel = document.querySelector('#step-crawl');
-            const translateDot = document.querySelector('#step-translate .step-dot');
-
-            if (isStream) {
-                document.querySelector('#step-crawl').lastChild.textContent = ' ⚡ Stream';
-                document.querySelector('#step-translate').lastChild.textContent = ' Cào+Dịch';
-            } else {
-                document.querySelector('#step-crawl').lastChild.textContent = ' Cào truyện';
-                document.querySelector('#step-translate').lastChild.textContent = ' Dịch thuật';
-            }
-
-            stepIds.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.className = 'step';
-            });
-
-            if (currentStep === 'idle') return;
-
-            const activeIdx = stateToIdx[currentStep] ?? -1;
-            stepIds.forEach((id, idx) => {
-                const el = document.getElementById(id);
-                if (!el) return;
-                if (idx < activeIdx) el.className = 'step completed';
-                else if (idx === activeIdx) el.className = 'step active';
-            });
-
-            if (currentStep === 'done') {
-                document.getElementById('step-done').className = 'step completed';
-            }
-        }
-        
-        async function poll() {
-            try {
-                const r = await fetch('/status');
-                const s = await r.json();
-                
-                btnStart.disabled = s.running;
-                if (s.running) {
-                    btnStop.style.display = 'block';
-                    btnStop.disabled = false;
-                } else {
-                    btnStop.style.display = 'none';
-                }
-                
-                logEl.textContent = s.log;
-                if (autoScroll) {
-                    logEl.scrollTop = logEl.scrollHeight;
-                }
-                
-                updateSteps(s.step, s.stream_mode);
-                
-                if (s.running && (s.step === 'crawling' || s.step === 'translating' || s.step === 'streaming')) {
-                    progressArea.style.display = 'block';
-                    if (s.step === 'crawling') {
-                        progressText.textContent = `Đang cào chương: ${s.current_chapter}`;
-                        progressBar.style.width = '100%';
-                        progressPercent.textContent = 'Đang tải...';
-                    } else if (s.step === 'streaming') {
-                        progressText.textContent = `⚡ Stream: đã cào+dịch ${s.current_chapter} chương` + (s.total_chapters > 0 ? `/${s.total_chapters}` : '');
-                        const pct = s.total_chapters > 0 ? Math.round(s.current_chapter / s.total_chapters * 100) : 50;
-                        progressBar.style.width = `${Math.min(pct,100)}%`;
-                        progressPercent.textContent = s.total_chapters > 0 ? `${pct}%` : 'Đang stream...';
-                    } else if (s.step === 'translating') {
-                        if (s.total_chapters > 0) {
-                            const percent = Math.min(100, Math.round((s.current_chapter / s.total_chapters) * 100));
-                            progressText.textContent = `Đang dịch: ${s.current_chapter}/${s.total_chapters} chương`;
-                            progressBar.style.width = `${percent}%`;
-                            progressPercent.textContent = `${percent}%`;
-                        } else {
-                            progressText.textContent = `Đang dịch: ${s.current_chapter} chương`;
-                            progressBar.style.width = '100%';
-                            progressPercent.textContent = 'Đang dịch...';
-                        }
-                    }
-                } else if (s.step === 'packaging') {
-                    progressArea.style.display = 'block';
-                    progressText.textContent = 'Đang đóng gói file EPUB...';
-                    progressBar.style.width = '100%';
-                    progressPercent.textContent = '100%';
-                } else {
-                    progressArea.style.display = 'none';
-                }
-
-                fileInfo.textContent = s.raw_file
-                    ? `File thô: ${s.raw_file}  •  File dịch: ${s.translated_file}`
-                    : '';
-
-                if (s.epub) {
-                    resultEl.textContent = 'Thành công! File EPUB lưu tại: ' + s.epub;
-                    resultEl.className = 'result-box success';
-                } else if (s.error) {
-                    resultEl.textContent = 'Lỗi: ' + s.error;
-                    resultEl.className = 'result-box error';
-                } else {
-                    resultEl.style.display = 'none';
-                }
-
-                lastStatus = s;
-                if (s.error_detail) {
-                    errorReport.style.display = 'block';
-                    errorDetailText.textContent = s.error_detail;
-                } else {
-                    errorReport.style.display = 'none';
-                }
-
-                if (s.running) {
-                    pollTimeout = setTimeout(poll, 1000);
-                }
-            } catch (err) {
-                console.error("Polling error:", err);
-                pollTimeout = setTimeout(poll, 2000);
-            }
-        }
-        poll();
-    </script>
-</body>
-</html>
-"""
 
 # Thu muc Documents chung tren Android Termux de app doc sach de dang quet thay
 SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
@@ -1377,13 +258,55 @@ def sanitize_filename(name: str) -> str:
     return name or "truyen"
 
 
+def resolve_raw_file(input_val: str, title: str = "") -> str:
+    """Return the stable raw-file path for a URL or preserve an explicit file path.
+
+    URL-derived names are canonical so changing the display title cannot start a
+    second crawl. The title-derived path remains a compatibility fallback for
+    files created by older GUI versions.
+    """
+    input_val = (input_val or "").strip()
+    if not input_val.lower().startswith(("http://", "https://")):
+        return input_val
+
+    url_name = f"{sanitize_filename(guess_title(input_val))}_raw.txt"
+    if os.path.isfile(url_name):
+        return url_name
+
+    legacy_name = f"{sanitize_filename(title)}_raw.txt" if title.strip() else ""
+    if legacy_name and legacy_name != url_name and os.path.isfile(legacy_name):
+        return legacy_name
+
+    return url_name
+
+
+STEP_MARKER_RE = re.compile(r"=== Buoc (\d)/4:")
+USAGE_LINE_RE = re.compile(
+    r"prompt_tokens=(\d+).*?cache_hit=(\d+).*?cache_miss=(\d+).*?"
+    r"completion_tokens=(\d+)")
+
+
+def _worker_command():
+    """Lenh chay pipeline trong tien trinh con. Ban .exe dong goi khong co pipeline.py roi,
+    nen goi lai chinh file .exe voi --worker (launcher.py chuyen sang pipeline.main)."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--worker"]
+    return [sys.executable, "-u", "pipeline.py"]
+
+
+def _worker_env():
+    env = dict(os.environ)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
     # tren GUI dung im (giong "treo") hang chuc chuong roi moi hien 1 luc.
-    import sys
-    args = [sys.executable, "-u", "pipeline.py", "--title", title]
+    args = _worker_command() + ["--title", title]
     if author:
         args += ["--author", author]
     args += ["--model", model]
@@ -1401,12 +324,10 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
         if chapters > 0:
             args += ["--chapters", str(chapters)]
 
-    if input_val.startswith("http"):
-        # File tho mac dinh cua pipeline.py la 1 ten CO DINH dung chung cho moi
-        # truyen - khong dat --raw rieng se khien 2 truyen khac nhau cao/resume
-        # chung vao 1 file, lam hong ca hai. Dat theo ten truyen de moi truyen
-        # co file rieng va tu resume dung truyen cua chinh no.
-        raw_file = f"{sanitize_filename(title)}_raw.txt"
+    if input_val.lower().startswith(("http://", "https://")):
+        # Ten file chuan lay tu URL; title chi la metadata hien thi. Neu co file
+        # cu theo cach dat ten cua ban GUI truoc day, resolve_raw_file se giu lai.
+        raw_file = resolve_raw_file(input_val, title)
         args += ["--start-url", input_val, "--raw", raw_file]
     else:
         raw_file = input_val
@@ -1427,12 +348,19 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             stop_requested=False,
             stream_mode=stream_mode,
             raw_file=raw_file,
-            translated_file=translated_file
+            translated_file=translated_file,
+            cost_spent=0.0,
+            cost_model=model,
+            allow_peak=allow_peak,
         )
 
     try:
         _termux_wake_lock()
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding="utf-8", errors="replace")
+        popen_kwargs = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                encoding="utf-8", errors="replace", env=_worker_env(), **popen_kwargs)
         with LOCK:
             CURRENT_PROC = proc
             # Nguoi dung co the bam "Dung" ngay trong khoang thoi gian ngan giua
@@ -1446,16 +374,36 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                     pass
 
         for line in proc.stdout:
-            with LOCK:
-                STATE["log"] += line
+                with LOCK:
+                    STATE["log"] += line
+
+                    usage_match = USAGE_LINE_RE.search(line)
+                    if usage_match:
+                        usage = {
+                            "prompt_cache_hit_tokens": int(usage_match.group(2)),
+                            "prompt_cache_miss_tokens": int(usage_match.group(3)),
+                            "completion_tokens": int(usage_match.group(4)),
+                        }
+                        try:
+                            usage_peak = bool(allow_peak and is_peak_hour())
+                            STATE["cost_spent"] += usd_from_usage(
+                                usage, model=model, peak=usage_peak)
+                        except Exception:
+                            pass
                 
-                # Parse steps
-                if "=== Buoc 1/3: Cao truyen ===" in line:
-                    STATE["step"] = "crawling"
-                elif "=== Buoc 2/3: Dich bang DeepSeek API ===" in line:
-                    STATE["step"] = "translating"
-                elif "=== Buoc 3/3: Dong goi EPUB ===" in line:
-                    STATE["step"] = "packaging"
+                # Parse steps: pipeline.py in "=== Buoc N/4: ..." (1 cao, 2 dich, 3 kiem tra, 4 dong goi).
+                # Che do stream gop buoc 1-2 thanh "streaming" nen bo qua hai moc dau.
+                step_match = STEP_MARKER_RE.search(line)
+                if step_match:
+                    marker = int(step_match.group(1))
+                    if marker == 1 and not stream_mode:
+                        STATE["step"] = "crawling"
+                    elif marker == 2 and not stream_mode:
+                        STATE["step"] = "translating"
+                    elif marker == 3:
+                        STATE["step"] = "validating"
+                    elif marker == 4:
+                        STATE["step"] = "packaging"
                 
                 # Parse crawl progress
                 if STATE["step"] == "crawling":
@@ -1522,44 +470,186 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
     finally:
         _termux_wake_unlock()
 
+def _platform() -> str:
+    if _IS_TERMUX:
+        return "termux"
+    return "windows" if os.name == "nt" else "other"
+
+
+def _library_items() -> list:
+    """Cac file EPUB da dong goi trong thu muc lam viec (moi nhat truoc), tru file dich thu."""
+    items = []
+    try:
+        entries = list(os.scandir("."))
+    except OSError:
+        return items
+    for entry in entries:
+        if not entry.is_file() or not entry.name.lower().endswith(".epub") or entry.name == TEST_EPUB_NAME:
+            continue
+        try:
+            st = entry.stat()
+        except OSError:
+            continue
+        items.append({"name": entry.name, "size": st.st_size, "mtime": int(st.st_mtime)})
+    items.sort(key=lambda item: item["mtime"], reverse=True)
+    return items
+
+
+def _request_stop() -> None:
+    """Danh dau yeu cau dung va ngat tien trinh pipeline dang chay (neu co)."""
+    proc_to_stop = None
+    with LOCK:
+        if STATE["running"]:
+            STATE["error"] = "Stopped"
+            STATE["stop_requested"] = True
+            proc_to_stop = CURRENT_PROC
+    if proc_to_stop:
+        try:
+            proc_to_stop.terminate()
+        except Exception:
+            pass
+        threading.Thread(target=force_kill_after_grace, args=(proc_to_stop,), daemon=True).start()
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/status":
-            with LOCK:
-                body = json.dumps(STATE).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
+    def _send(self, status, body=b"", content_type=None, headers=None):
+        self.send_response(status)
+        if content_type:
+            self.send_header("Content-Type", content_type)
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
+        if status != 204:
+            self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if body and status != 204:
             self.wfile.write(body)
-        elif self.path == "/get_key":
-            key = os.environ.get("DEEPSEEK_API_KEY", "")
-            body = json.dumps({"key": key}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-        elif self.path == "/download_test":
-            if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
-                with open(TEST_EPUB_PATH, "rb") as f:
-                    data = f.read()
+
+    def _json(self, obj, status=200):
+        self._send(status, json.dumps(obj, ensure_ascii=False).encode("utf-8"),
+                   "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+
+    def _send_file(self, path, content_type, download_name=None, cache="no-cache"):
+        headers = {"Cache-Control": cache}
+        if download_name:
+            ascii_name = download_name.encode("ascii", "ignore").decode().replace('"', "") or "download"
+            quoted = urllib.parse.quote(download_name)
+            headers["Content-Disposition"] = f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quoted}'
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as f:
                 self.send_response(200)
-                self.send_header("Content-Type", "application/epub+zip")
-                self.send_header("Content-Disposition",
-                                 'attachment; filename="test_dung_thu.epub"')
-                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(size))
+                for key, value in headers.items():
+                    self.send_header(key, value)
                 self.end_headers()
-                self.wfile.write(data)
-            else:
-                self.send_response(404)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "Chua co file EPUB dung thu"}).encode())
+                shutil.copyfileobj(f, self.wfile)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _read_form(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return urllib.parse.parse_qs(self.rfile.read(length).decode())
+
+    def _estimate(self, query):
+        input_value = query.get("input", [""])[0].strip()
+        title = query.get("title", [""])[0].strip()
+        model = query.get("model", [DEFAULT_MODEL])[0].strip() or DEFAULT_MODEL
+        effort = query.get("reasoning_effort", [DEFAULT_REASONING_EFFORT])[0].strip()
+        if effort not in REASONING_EFFORTS:
+            effort = DEFAULT_REASONING_EFFORT
+        no_thinking = query.get("no_thinking", [""])[0].lower() in ("1", "true", "yes", "on")
+        allow_peak = query.get("allow_peak", [""])[0].lower() in ("1", "true", "yes", "on")
+
+        if not input_value:
+            return {"available": False, "reason": "Chưa có file thô hoặc link."}
+
+        if input_value.lower().startswith(("http://", "https://")):
+            raw_name = resolve_raw_file(input_value, title)
+            raw_path = Path.cwd() / raw_name
+            if not raw_path.is_file():
+                adapter = find_adapter(input_value)
+                if adapter and adapter.is_catalog_url(input_value):
+                    return estimate_catalog(input_value, adapter, model=model, reasoning_effort=effort,
+                                            no_thinking=no_thinking,
+                                            peak=bool(allow_peak and is_peak_hour()))
+                return {"available": False,
+                        "reason": "Link này chưa được cào nên chưa biết số chương; cào xong mới ước tính được."}
         else:
-            body = PAGE.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(body)
+            raw_path = Path(input_value).expanduser()
+            if raw_path.suffix.lower() != ".txt":
+                return {"available": False, "reason": "Chỉ đọc file .txt."}
+            try:
+                raw_path = raw_path.resolve()
+                raw_path.relative_to(Path.cwd().resolve())
+            except (OSError, ValueError):
+                return {"available": False, "reason": "Đường dẫn file không hợp lệ."}
+            if not raw_path.is_file():
+                return {"available": False, "reason": "Không tìm thấy file thô."}
+
+        translated_path = Path(str(raw_path) + ".viet.txt")
+        peak = bool(allow_peak and is_peak_hour())
+        return estimate_file(raw_path, translated_path if translated_path.is_file() else None,
+                             model=model, reasoning_effort=effort,
+                             no_thinking=no_thinking, peak=peak)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/status":
+            with LOCK:
+                body = json.dumps(STATE, ensure_ascii=False)
+            self._send(200, body.encode(), "application/json", {"Cache-Control": "no-store"})
+        elif path == "/estimate":
+            try:
+                query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                self._json(self._estimate(query), 200)
+            except Exception:
+                self._json({"available": False, "reason": "Không thể ước tính file này."}, 400)
+        elif path == "/get_key":
+            self._json({"key": os.environ.get("DEEPSEEK_API_KEY", "")})
+        elif path == "/info":
+            self._json({
+                "app": "novel-translator",
+                "version": __version__,
+                "platform": _platform(),
+                "frozen": bool(getattr(sys, "frozen", False)),
+                "data_dir": os.getcwd(),
+                "can_quit": SHUTDOWN_HOOK is not None,
+                "can_open_dir": _platform() == "windows",
+            })
+        elif path == "/library":
+            self._json({"items": _library_items()})
+        elif path == "/download":
+            name = urllib.parse.parse_qs(parsed.query).get("name", [""])[0]
+            valid = (name and name == os.path.basename(name) and not name.startswith(".")
+                     and os.sep not in name and (not os.altsep or os.altsep not in name)
+                     and name.lower().endswith(".epub") and name != TEST_EPUB_NAME and os.path.isfile(name))
+            if valid:
+                self._send_file(name, "application/epub+zip", download_name=name)
+            else:
+                self._json({"error": "Khong tim thay file EPUB"}, 404)
+        elif path == "/download_test":
+            if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
+                self._send_file(TEST_EPUB_PATH, "application/epub+zip", download_name=TEST_EPUB_NAME)
+            else:
+                self._json({"error": "Chua co file EPUB dung thu"}, 404)
+        elif path.startswith("/assets/"):
+            asset = _web_file(urllib.parse.unquote(path[len("/assets/"):]))
+            if asset is None:
+                self._json({"error": "Khong tim thay"}, 404)
+            else:
+                cache = "public, max-age=86400" if asset.suffix.lower() == ".woff2" else "no-cache"
+                self._send_file(asset, ASSET_TYPES.get(asset.suffix.lower(), "application/octet-stream"), cache=cache)
+        elif path in ("/", "/index.html"):
+            page = _web_file("index.html")
+            if page is None:
+                self._send(500, "Thieu thu muc web/ (index.html). Cai lai hoac cap nhat ung dung.".encode("utf-8"),
+                           "text/plain; charset=utf-8")
+            else:
+                self._send_file(page, "text/html; charset=utf-8")
+        else:
+            self._json({"error": "Khong tim thay"}, 404)
 
     def do_POST(self):
         if self.path.startswith("/upload_raw"):
@@ -1571,55 +661,57 @@ class Handler(http.server.BaseHTTPRequestHandler):
             save_path = os.path.join(UPLOAD_DIR, filename)
             with open(save_path, "wb") as out:
                 out.write(data)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": True, "path": save_path}, ensure_ascii=False).encode("utf-8"))
+            self._json({"success": True, "path": save_path})
             return
 
         if self.path == "/stop":
-            global CURRENT_PROC
-            proc_to_stop = None
-            with LOCK:
-                if STATE["running"]:
-                    STATE["error"] = "Stopped"
-                    STATE["stop_requested"] = True
-                    proc_to_stop = CURRENT_PROC
-            if proc_to_stop:
-                try:
-                    proc_to_stop.terminate()
-                except Exception:
-                    pass
-                threading.Thread(target=force_kill_after_grace, args=(proc_to_stop,), daemon=True).start()
-            self.send_response(204)
-            self.end_headers()
+            _request_stop()
+            self._send(204)
+            return
+
+        if self.path == "/shutdown":
+            if SHUTDOWN_HOOK is None:
+                self._json({"error": "Chuc nang nay chi co khi chay bang file .exe"}, 404)
+                return
+            _request_stop()
+            self._send(204)
+            threading.Thread(target=SHUTDOWN_HOOK, daemon=True).start()
+            return
+
+        if self.path == "/open_data_dir":
+            if _platform() != "windows":
+                self._json({"error": "Chi ho tro tren Windows"}, 404)
+                return
+            try:
+                os.startfile(os.getcwd())
+            except OSError as e:
+                self._json({"error": str(e)}, 500)
+                return
+            self._send(204)
             return
 
         if self.path == "/save_key":
-            length = int(self.headers.get("Content-Length", 0))
-            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            params = self._read_form()
             key = params.get("key", [""])[0].strip()
             save_api_key(key)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": True}).encode())
+            self._json({"success": True})
             return
 
         if self.path == "/test_key":
-            length = int(self.headers.get("Content-Length", 0))
-            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            params = self._read_form()
             key = params.get("key", [""])[0].strip()
             success, msg = test_deepseek_key(key)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": success, "message": msg}).encode())
+            self._json({"success": success, "message": msg})
+            return
+
+        if self.path == "/key_balance":
+            params = self._read_form()
+            key = params.get("key", [""])[0].strip()
+            self._json(get_deepseek_balance(key))
             return
 
         if self.path == "/test_translate":
-            length = int(self.headers.get("Content-Length", 0))
-            params = urllib.parse.parse_qs(self.rfile.read(length).decode())
+            params = self._read_form()
             chinese_text = params.get("text", [""])[0].strip()
             api_key = os.environ.get("DEEPSEEK_API_KEY", "")
             if not api_key:
@@ -1628,15 +720,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 result = {"success": False, "message": "Vui long nhap doan van Trung."}
             else:
                 result = test_translate_handler(chinese_text, api_key)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
+            self._json(result)
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        params = urllib.parse.parse_qs(self.rfile.read(length).decode())
-        
+        params = self._read_form()
+
         input_val = params.get("input", [""])[0].strip()
         title = params.get("title", [""])[0].strip()
         author = params.get("author", [""])[0].strip()
@@ -1644,17 +732,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         reasoning_effort = params.get("reasoning_effort", [DEFAULT_REASONING_EFFORT])[0].strip()
         if reasoning_effort not in REASONING_EFFORTS:
             reasoning_effort = DEFAULT_REASONING_EFFORT
-        
+
         try:
             workers = int(params.get("workers", ["1"])[0].strip())
         except ValueError:
             workers = 1
-            
+
         try:
             temperature = float(params.get("temperature", ["1.3"])[0].strip())
         except ValueError:
             temperature = 1.3
-            
+
         allow_peak = "allow_peak" in params
         no_style_detect = "no_style_detect" in params
         no_thinking = "no_thinking" in params
@@ -1664,10 +752,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             chapters = int(params.get("chapters", ["0"])[0].strip())
         except ValueError:
             chapters = 0
-        
+
         with LOCK:
             already_running = STATE["running"]
-            
+
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
@@ -1675,14 +763,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 daemon=True
             ).start()
 
-            
-        self.send_response(204)
-        self.end_headers()
+        self._send(204)
 
     def log_message(self, fmt, *args):
         pass  # im lang, poll moi 1s spam terminal khong can thiet
 
+
+class GuiServer(http.server.ThreadingHTTPServer):
+    # Tren Windows SO_REUSEADDR cho phep 2 server cung bind 1 cong (lan nhau, khong bao loi),
+    # nen chi bat tren he khac de khoi dong lai nhanh.
+    allow_reuse_address = os.name != "nt"
+
+
+def make_server(host=None, port=8000):
+    """Server GUI. Mac dinh chi nghe 127.0.0.1 de nguoi khac trong mang khong doc duoc API key
+    qua /get_key; dat NOVEL_GUI_HOST=0.0.0.0 neu that su can truy cap tu may khac."""
+    host = host or os.environ.get("NOVEL_GUI_HOST", "127.0.0.1")
+    return GuiServer((host, port), Handler)
+
+
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     print("GUI web: http://localhost:8000")
-    http.server.ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+    make_server().serve_forever()
