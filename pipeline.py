@@ -211,7 +211,8 @@ def main():
             style_guide=style_guide,
             should_stop=lambda: _stop_flag,
             term_categories=term_categories,
-            on_chapter=_on_chapter_stream
+            on_chapter=_on_chapter_stream,
+            avoid_peak=not args.allow_peak
         )
 
     elif args.start_url:

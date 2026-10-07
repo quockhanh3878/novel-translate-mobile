@@ -23,7 +23,7 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 * ✅ **Kiểm tra chất lượng tự động (Validation)**: Module `validator.py` tự động chạy sau khi dịch xong để phát hiện: chương bị rỗng, số chương bị lệch so với bản gốc, và tồn dư ký tự tiếng Hán chưa được dịch.
 * 🔀 **Dịch nhiều truyện song song (Multi-Novel)**: `multi_pipeline.py` cho phép dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON. Các luồng chia sẻ tín hiệu dừng chung — nếu một truyện gặp lỗi hết token, **tất cả đều dừng ngay lập tức**.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện ghi đĩa sau mỗi chương. Khi bị gián đoạn, chạy lại sẽ tự động bỏ qua các chương đã dịch thành công.
-* 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm (9-12h, 14-18h giờ Bắc Kinh, thứ 2 đến thứ 6, giá tăng gấp đôi; cuối tuần giá thấp cả ngày) để tạm dừng và tự động tiếp tục.
+* 💰 **Tối ưu chi phí (Peak Hour Detect)**: Tự động nhận diện khung giờ cao điểm (9-12h, 14-18h giờ Bắc Kinh, thứ 2 đến thứ 6, giá tăng gấp đôi; cuối tuần và ngày lễ Trung Quốc giá thấp cả ngày, ngày lễ lấy từ thư viện `holidays`) để tạm dừng và tự động tiếp tục.
 * 🖥️ **Giao diện Web GUI & Widget 1-chạm**: Giao diện Responsive (Glassmorphism dark mode) mượt mà trên cả trình duyệt điện thoại và PC. Hỗ trợ Widget Termux trên Android.
 
 ---
@@ -307,6 +307,8 @@ Các lệnh sau không gọi DeepSeek API:
 .venv\Scripts\python.exe test_stray_quote_fix.py
 .venv\Scripts\python.exe test_idiom_review.py
 .venv\Scripts\python.exe test_prepare_novel.py
+.venv\Scripts\python.exe test_chapter_header.py
+.venv\Scripts\python.exe test_peak_hours.py
 
 # macOS/Linux: thay .venv\Scripts\python.exe bằng .venv/bin/python
 ```

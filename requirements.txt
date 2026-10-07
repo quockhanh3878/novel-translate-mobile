@@ -10,3 +10,4 @@ ebooklib
 pillow
 cloudscraper
 opencc-python-reimplemented
+holidays

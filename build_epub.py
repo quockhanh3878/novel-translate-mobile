@@ -23,7 +23,7 @@ from html import escape
 from ebooklib import epub
 from PIL import Image, ImageDraw, ImageFont
 
-from crawler import parse_chapters
+from crawler import is_novel_title_entry, parse_chapters
 
 EPUB_CSS = """
 body {
@@ -103,6 +103,8 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     chapters = parse_chapters(input_file)
     if not chapters:
         raise ValueError(f"Khong tim thay chuong nao trong {input_file}")
+    if is_novel_title_entry(chapters, 0):
+        chapters = chapters[1:]
 
     book = epub.EpubBook()
     book.set_identifier(f"novel-translation-{int(time.time())}")

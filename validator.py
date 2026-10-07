@@ -1,5 +1,5 @@
 import re
-from crawler import parse_chapters
+from crawler import is_novel_title_entry, parse_chapters
 
 def validate_translation(raw_file: str, translated_file: str, log=print) -> list[dict]:
     log("=== Bat dau Validation (Sanity Check) ===")
@@ -17,6 +17,10 @@ def validate_translation(raw_file: str, translated_file: str, log=print) -> list
         return [{"type": "error", "message": f"Khong the doc {translated_file}"}]
         
     warnings = []
+    if is_novel_title_entry(raw_chapters, 0):
+        raw_chapters = raw_chapters[1:]
+    if is_novel_title_entry(trans_chapters, 0):
+        trans_chapters = trans_chapters[1:]
     
     # 1. Kiem tra so luong chuong
     if len(raw_chapters) != len(trans_chapters):
@@ -27,8 +31,7 @@ def validate_translation(raw_file: str, translated_file: str, log=print) -> list
     # 2. Kiem tra noi dung tung chuong
     chinese_char_pattern = re.compile(r'[\u4e00-\u9fff]')
     
-    for i, ch in enumerate(trans_chapters):
-        idx = i + 1
+    for idx, ch in enumerate(trans_chapters, 1):
         paras = ch.get("paragraphs", [])
         
         # 2.1 Chuong rong

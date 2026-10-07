@@ -100,13 +100,14 @@ def demo():
 
     # Gio cao diem DeepSeek: 9-12h va 14-18h gio Bac Kinh. Dung datetime co dinh
     # (khong dung datetime.now() that) de test khong bi flaky/treo theo dong ho may.
-    assert is_peak_hour(datetime(2026, 1, 1, 9, 0, tzinfo=BEIJING_TZ)) is True  # dau khung
-    assert is_peak_hour(datetime(2026, 1, 1, 11, 59, tzinfo=BEIJING_TZ)) is True
-    assert is_peak_hour(datetime(2026, 1, 1, 12, 0, tzinfo=BEIJING_TZ)) is False  # het khung (exclusive)
-    assert is_peak_hour(datetime(2026, 1, 1, 13, 30, tzinfo=BEIJING_TZ)) is False  # nghi trua
-    assert is_peak_hour(datetime(2026, 1, 1, 14, 0, tzinfo=BEIJING_TZ)) is True
-    assert is_peak_hour(datetime(2026, 1, 1, 18, 0, tzinfo=BEIJING_TZ)) is False
-    assert is_peak_hour(datetime(2026, 1, 1, 22, 0, tzinfo=BEIJING_TZ)) is False  # ngoai gio
+    # 2026-01-06 la thu 3 binh thuong (2026-01-01 la ngay le nen khong con la cao diem).
+    assert is_peak_hour(datetime(2026, 1, 6, 9, 0, tzinfo=BEIJING_TZ)) is True  # dau khung
+    assert is_peak_hour(datetime(2026, 1, 6, 11, 59, tzinfo=BEIJING_TZ)) is True
+    assert is_peak_hour(datetime(2026, 1, 6, 12, 0, tzinfo=BEIJING_TZ)) is False  # het khung (exclusive)
+    assert is_peak_hour(datetime(2026, 1, 6, 13, 30, tzinfo=BEIJING_TZ)) is False  # nghi trua
+    assert is_peak_hour(datetime(2026, 1, 6, 14, 0, tzinfo=BEIJING_TZ)) is True
+    assert is_peak_hour(datetime(2026, 1, 6, 18, 0, tzinfo=BEIJING_TZ)) is False
+    assert is_peak_hour(datetime(2026, 1, 6, 22, 0, tzinfo=BEIJING_TZ)) is False  # ngoai gio
     # Chi thu 2-6: 2026-01-03 la thu 7, 2026-01-04 chu nhat, 2026-01-05 thu 2.
     assert is_peak_hour(datetime(2026, 1, 3, 10, 0, tzinfo=BEIJING_TZ)) is False
     assert is_peak_hour(datetime(2026, 1, 4, 15, 0, tzinfo=BEIJING_TZ)) is False

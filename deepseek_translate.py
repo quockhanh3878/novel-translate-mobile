@@ -47,7 +47,7 @@ from pathlib import Path
 
 import requests
 
-from crawler import CHAPTER_SEP, count_chapters, parse_chapters
+from crawler import CHAPTER_SEP, count_chapters, is_novel_title_entry, parse_chapters
 from text_postprocess import postprocess, postprocess_title
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
@@ -113,8 +113,10 @@ class InsufficientBalanceError(RuntimeError):
     pass
 
 # Gio cao diem DeepSeek (docs pricing): 01-04h va 06-10h UTC = 9h-12h va 14h-18h GIO BAC KINH
-# (UTC+8), CHI thu 2 den thu 6 (khong tinh ngay le Trung Quoc - code khong biet ngay le nen
-# ngay le van bi coi la cao diem, chi ton thoi gian cho, khong ton tien). Cuoi tuan gia thap.
+# (UTC+8), CHI thu 2 den thu 6 va TRU ngay le Trung Quoc ("excluding Chinese public holidays";
+# ngay le va cuoi tuan la gia thap ca ngay). Ngay le lay tu thu vien `holidays` (CN, gom ca
+# ngay nghi dieu chinh); thieu thu vien hoac nam chua co du lieu thi coi nhu ngay thuong
+# (than trong: chi cho thua, khong goi nham gia gap doi).
 # Trung Quoc khong dung DST nen offset co dinh, khong can zoneinfo/tzdata.
 BEIJING_TZ = timezone(timedelta(hours=8))
 PEAK_WINDOWS_BEIJING = [(9, 12), (14, 18)]  # [start, end) gio, dang 24h
@@ -127,9 +129,22 @@ DEFAULT_REASONING_EFFORT = "medium"
 REASONING_EFFORTS = ("low", "medium", "high", "max")
 
 
+@lru_cache(maxsize=8)
+def _china_public_holidays(year: int) -> frozenset:
+    """Cac ngay nghi le cua Trung Quoc trong nam (gom ngay nghi dieu chinh). Rong neu chua
+    cai thu vien `holidays` hoac thu vien chua co du lieu nam do."""
+    try:
+        import holidays
+        return frozenset(holidays.country_holidays("CN", years=year).keys())
+    except Exception:
+        return frozenset()
+
+
 def is_peak_hour(now: datetime | None = None) -> bool:
     now = (now or datetime.now(BEIJING_TZ)).astimezone(BEIJING_TZ)
     if now.weekday() >= 5:  # thu 7, chu nhat
+        return False
+    if now.date() in _china_public_holidays(now.year):
         return False
     return any(start <= now.hour < end for start, end in PEAK_WINDOWS_BEIJING)
 
@@ -754,12 +769,10 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
         ],
         "temperature": temperature,
         "response_format": {"type": "json_object"},
-        # QUAN TRONG: da kiem chung thuc te - voi response_format=json_object, neu tat
-        # thinking thi deepseek-v4-flash chi ECHO nguyen van doan Trung vao truong
-        # "paragraphs" thay vi dich (0% dich duoc), do system prompt yeu cau dich ro
-        # rang. Bat thinking thi dich dung binh thuong (co reasoning_content chung
-        # minh model thuc su suy luan dich tung cau). Vi vay mac dinh LUON bat thinking
-        # cho cuoc goi dich chuong - --no-thinking chi de danh khi API/model doi hanh vi.
+        # Do 2026-09/10 (deepseek-flash, json_object): tat thinking VAN dich duoc nhung kem
+        # hon ro ret - thanh ngu dich sai/sat chu, sot chu Han (chuong 20-21: 3 tot/4 tam/7
+        # sai so voi 11/3/0 khi bat thinking). Vi vay mac dinh LUON bat thinking cho cuoc
+        # goi dich chuong - --no-thinking chi la lua chon danh doi chat luong lay toc do/gia.
         "thinking": {"type": "enabled" if thinking else "disabled"},
         # Model ho tro toi 384K token output nhung API mac dinh gioi han thap (~4096)
         # neu khong khai bao - 1 chuong tieu thuyet mang dai (VD >5000 chu Trung) dich
@@ -946,7 +959,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
         thanh progress bar/danh sach chuong thay vi phai parse chuoi log.
     should_stop: ham tra ve True neu can dung giua chung (GUI dung de xu ly nut "Dung").
     avoid_peak: mac dinh True - CAM goi API DeepSeek trong gio cao diem (9-12h, 14-18h
-        gio Bac Kinh, gia gap doi). Tu dong cho den khi het gio cao diem roi moi goi,
+        gio Bac Kinh, thu 2-6 tru ngay le Trung Quoc, gia gap doi). Tu dong cho den khi het gio cao diem roi moi goi,
         kiem tra lai truoc MOI dot chuong (khong chi luc bat dau) vi 1 truyen dai co
         the dich xuyen qua luc bat dau/ket thuc gio cao diem.
     on_balance_error: ham duoc goi khi phat hien het so du tai khoan. Dung de bao hieu
@@ -962,6 +975,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
 
     chapters = parse_chapters(input_file)
     log(f"Da phan tich {len(chapters)} chuong tu {input_file}.")
+    title_offset = 1 if is_novel_title_entry(chapters, 0) else 0
 
     done = count_translated_chapters(output_file)
     pending = chapters[done:]
@@ -1049,6 +1063,9 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
         log(f"CANH BAO: workers={workers} - nhieu chapter dich song song co the lam mat nhat quan ten rieng.")
 
     def _work(ch, chapter_idx, glossary_snapshot, idiom_snapshot):
+        if is_novel_title_entry(chapters, chapter_idx - 1):
+            return {"title": ch["title"], "paragraphs": [], "new_terms": {}, "idioms": {},
+                    "term_warnings": [], "usage": {}}
         # Kiem tra write-ahead cache truoc khi goi API
         cached = _load_cache(output_file, chapter_idx)
         if cached is not None:
@@ -1056,7 +1073,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
             return cached
         result = translate_chapter(ch, system_prompt, api_key, model,
                                   temperature, thinking=thinking, should_stop=should_stop,
-                                  chapter_idx=chapter_idx, log=log, glossary=glossary_snapshot,
+                                  chapter_idx=chapter_idx - title_offset, log=log, glossary=glossary_snapshot,
                                   reasoning_effort=reasoning_effort, idiom_memory=idiom_snapshot)
         # Ghi write-ahead cache ngay khi API tra ve thanh cong
         _save_cache(output_file, chapter_idx, result)
@@ -1127,6 +1144,10 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                         break  # Bao toan thu tu, khong xuat cac future sau
 
 
+                    if is_novel_title_entry(chapters, idx - 1):
+                        translated["title"] = ch["title"]
+                    else:
+                        translated["title"] = f"Chương {idx - title_offset}"
                     f_out.write(f"=== {translated['title']} ===\n\n")
                     for p in translated["paragraphs"]:
                         f_out.write(f"{p}\n\n")
@@ -1185,7 +1206,8 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                             style_guide: str = "", log=print,
                             on_chapter=None, should_stop=None,
                             on_balance_error=None, term_categories: str = "các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ",
-                            reasoning_effort: str | None = DEFAULT_REASONING_EFFORT) -> list[dict]:
+                            reasoning_effort: str | None = DEFAULT_REASONING_EFFORT,
+                            avoid_peak: bool = True) -> list[dict]:
     """Dich tung chuong tu generator (crawl_chapters_stream) ngay lap tuc khi co du lieu.
 
     Khac voi translate_novel (doc tu file co san), ham nay nhan chapter_generator -
@@ -1194,6 +1216,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
 
     Ung dung: pipeline --stream --chapters X: cao X chuong roi dich luon tung chuong.
     style_guide: truyen thang tu ket qua detect_style_guide neu da phan tich truoc do.
+    avoid_peak: mac dinh True - cho het gio cao diem truoc moi chuong (nhu translate_novel).
     """
     glossary_path = glossary_path or glossary_path_for(output_file)
     glossary = load_glossary(glossary_path)
@@ -1206,7 +1229,14 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
     # Lay so chuong da dich truoc do de tinh idx tuong doi
     from crawler import count_chapters as _count
     already_done = _count(output_file)
-    log(f"Da dich {already_done} chuong truoc do, bat dau ghi tiep.")
+    if already_done == 0:
+        # File tho cua crawler luon co muc tieu de o dau; ghi muc do vao file dich truoc de
+        # che do stream va che do thuong dung chung chi so (doi che do giua chung khong lech).
+        with open(output_file, "a", encoding="utf-8") as f_head:
+            f_head.write("=== TRUYỆN ===\n\n" + CHAPTER_SEP)
+        already_done = 1
+    title_offset = 1 if is_novel_title_entry(parse_chapters(output_file), 0) else 0
+    log(f"Da dich {already_done - title_offset} chuong truoc do, bat dau ghi tiep.")
 
     style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
@@ -1224,6 +1254,9 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                 log("Da dung theo yeu cau.")
                 break
 
+            if avoid_peak and wait_until_offpeak(log=log, should_stop=should_stop):
+                break  # nguoi dung dung luc dang cho het gio cao diem
+
             idx += 1
 
             # Kiem tra write-ahead cache
@@ -1236,7 +1269,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                     translated = translate_chapter(
                         chapter, system_prompt, api_key, model,
                         temperature, thinking=thinking, should_stop=should_stop,
-                        chapter_idx=idx, log=log, glossary=glossary,
+                        chapter_idx=idx - title_offset, log=log, glossary=glossary,
                         reasoning_effort=reasoning_effort, idiom_memory=idiom_memory
                     )
                     # Ghi write-ahead cache ngay khi API tra ve thanh cong
@@ -1254,6 +1287,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                     failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
                     continue
 
+            translated["title"] = f"Chương {idx - title_offset}"  # ghi de ca ket qua cache cu
             f_out.write(f"=== {translated['title']} ===\n\n")
             for p in translated["paragraphs"]:
                 f_out.write(f"{p}\n\n")
@@ -1306,9 +1340,8 @@ def main():
                          help="Bo qua buoc tu phan tich van phong tu chuong dau")
     parser.add_argument("--no-thinking", action="store_true",
                          help="Tat thinking mode cho tung chuong dich de tiet kiem token/chi phi. "
-                              "CANH BAO: da kiem chung deepseek-v4-flash voi response_format=json_object "
-                              "+ thinking tat se KHONG dich, chi echo nguyen van dau vao - chi dung co nay "
-                              "neu model/API doi khac hanh vi nay.")
+                              "CANH BAO: thinking tat van dich duoc nhung chat luong kem hon, de sot thanh ngu "
+                              "va chu Han.")
     parser.add_argument("--reasoning-effort", choices=REASONING_EFFORTS, default=DEFAULT_REASONING_EFFORT,
                          help="Muc suy luan khi bat thinking (mac dinh: medium, API quy ve high). 'low' re "
                               "hon ~15%% nhung dich thanh ngu kem hon.")
@@ -1318,7 +1351,8 @@ def main():
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--allow-peak", action="store_true",
                          help="Cho phep goi API trong gio cao diem DeepSeek (9-12h, 14-18h gio Bac Kinh, "
-                              "thu 2-6, gia gap doi) - mac dinh KHONG cho phep, tu dong cho het gio cao diem")
+                              "thu 2-6 tru ngay le Trung Quoc, gia gap doi) - mac dinh KHONG cho phep, tu dong "
+                              "cho het gio cao diem")
     args = parser.parse_args()
 
     try:

@@ -55,6 +55,11 @@ def parse_chapters(input_file: str) -> list[dict]:
     return chapters
 
 
+def is_novel_title_entry(chapters: list[dict], index: int) -> bool:
+    """Muc tieu de la muc dau tien khong co doan van trong file dinh dang truyen."""
+    return index == 0 and bool(chapters) and not chapters[0].get("paragraphs")
+
+
 def count_chapters(file_path: str) -> int:
     """Dem so chuong da hoan tat trong 1 file dinh dang === ... === (ca file tho da cao
     lan file da dich deu dung chung dinh dang nay) - dung "="*40 lam moc ket thuc 1
