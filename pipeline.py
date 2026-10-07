@@ -45,7 +45,8 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
-from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream
+from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream, iter_chapters_from_file
+from sources import find_adapter
 from deepseek_translate import (load_dotenv, translate_novel, translate_novel_stream, detect_style_guide,
                                 DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
 from validator import validate_translation
@@ -83,10 +84,9 @@ def main():
     parser.add_argument("--workers", type=int, default=1,
                          help="So chuong dich song song (>1 danh doi tinh nhat quan ten rieng lay toc do)")
     parser.add_argument("--chapters", type=int, default=0,
-                         help="Gioi han so chuong can cao/dich (0 = toan bo truyen). Dung voi --stream.")
+                         help="So chuong moi can dich tu chuong 1, bo qua chuong da dich (0 = den het). Dung voi --stream.")
     parser.add_argument("--stream", action="store_true",
-                         help="[MOI] Che do stream: cao tung chuong roi dich ngay lap tuc, "
-                              "khong cho den khi cao het. Nen dung kem --chapters X.")
+                         help="Quet tu chuong 1, bo qua chuong da dich va dung sau khi dich du so chuong moi.")
     parser.add_argument("--no-style-detect", action="store_true")
     parser.add_argument("--no-prepare", action="store_true",
                          help="Bo qua buoc chuan bi truoc khi dich (quet ca truyen, lap glossary ten rieng "
@@ -134,11 +134,12 @@ def main():
     _check_disk_space(args.raw)
 
     print("=== Buoc 1/4: Cao truyen ===")
-    if args.stream and args.start_url:
-        # --- CHE DO STREAM: cao tung chuong va dich ngay ---
+    failed = []
+    if args.stream:
+        # --- CHE DO STREAM: quet tu dau, bo qua chuong da dich ---
         chapter_limit = args.chapters
-        limit_msg = f" ({chapter_limit} chuong dau)" if chapter_limit > 0 else " (toan bo)"
-        print(f"[STREAM MODE] Cao + Dich dong thoi{limit_msg}...")
+        limit_msg = f" (dich them {chapter_limit} chuong chua dich)" if chapter_limit > 0 else " (dich den het)"
+        print(f"[STREAM MODE] Dich tu chuong 1, bo qua chuong da dich{limit_msg}...")
 
         # Phan tich van phong truoc (lay 1 chuong mau de goi style detect)
         style_guide = ""
@@ -164,13 +165,21 @@ def main():
                 except Exception as e:
                     print(f"Lỗi khi đọc file văn phong: {e}")
 
-            if not style_guide:
+            if not style_guide and args.start_url:
                 print("Dang lay mau van phong tu chuong dau...")
-                from crawler import crawl_chapter, guess_title
+                from crawler import crawl_chapter
                 import re as _re
-                match = _re.match(r"(.*_)(\d+)(\.html)$", args.start_url)
-                if match:
-                    sample_ch = crawl_chapter(args.start_url)
+                adapter = find_adapter(args.start_url)
+                sample_url = args.start_url
+                if adapter and adapter.is_catalog_url(args.start_url):
+                    sample_chapters = adapter.list_chapters(args.start_url)
+                    if sample_chapters:
+                        sample_url = sample_chapters[0]["url"]
+                    else:
+                        print("Khong lay duoc danh sach chuong de phan tich van phong.")
+
+                if adapter or _re.match(r"(.*_)(\d+)(\.html?)$", args.start_url):
+                    sample_ch = crawl_chapter(sample_url)
                     if sample_ch:
                         style_data = detect_style_guide([sample_ch], api_key, args.model,
                                                           should_stop=lambda: _stop_flag)
@@ -190,11 +199,19 @@ def main():
                             except Exception as e:
                                 print(f"Lỗi khi lưu file văn phong: {e}")
 
-        chapter_gen = crawl_chapters_stream(
-            args.start_url, args.raw,
-            max_chapters=chapter_limit,
-            should_stop=lambda: _stop_flag
-        )
+        if args.start_url:
+            chapter_gen = crawl_chapters_stream(
+                args.start_url, args.raw,
+                max_chapters=0,
+                should_stop=lambda: _stop_flag,
+                from_start=True,
+            )
+        elif os.path.exists(args.raw):
+            chapter_gen = iter_chapters_from_file(args.raw)
+            print(f"Bo qua cao - quet tu chuong 1 trong {args.raw}.")
+        else:
+            print(f"Error: khong co --start-url va khong tim thay {args.raw}.")
+            sys.exit(1)
 
         print("\n=== Buoc 2/4: Dich ngay theo tung chuong vua cao ===")
         def _on_chapter_stream(idx, title, translated):
@@ -212,7 +229,8 @@ def main():
             should_stop=lambda: _stop_flag,
             term_categories=term_categories,
             on_chapter=_on_chapter_stream,
-            avoid_peak=not args.allow_peak
+            avoid_peak=not args.allow_peak,
+            max_chapters=chapter_limit,
         )
 
     elif args.start_url:

@@ -34,6 +34,7 @@ Su dung:
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 import random
@@ -1200,6 +1201,60 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
     return failed_chapters
 
 
+def _source_index_from_title(title: str):
+    match = re.search(r"(?:chương|chapter|第)\s*0*(\d+)", title or "", re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _translated_source_indexes(output_file: str) -> set[int]:
+    if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+        return set()
+    chapters = parse_chapters(output_file)
+    translated = set()
+    ordinal = 0
+    for index, chapter in enumerate(chapters):
+        if is_novel_title_entry(chapters, index):
+            continue
+        ordinal += 1
+        translated.add(_source_index_from_title(chapter.get("title", "")) or ordinal)
+    return translated
+
+
+def _write_stream_translation(output_file: str, source_index: int, translated: dict) -> None:
+    """Ghi ban dich va giu thu tu chuong nguon neu file dang bi khuyet chuong."""
+    title = translated["title"]
+    existing_indexes = _translated_source_indexes(output_file)
+    if existing_indexes and source_index < max(existing_indexes):
+        chapters = parse_chapters(output_file)
+        entries = []
+        ordinal = 0
+        for index, chapter in enumerate(chapters):
+            if is_novel_title_entry(chapters, index):
+                continue
+            ordinal += 1
+            entries.append((
+                _source_index_from_title(chapter.get("title", "")) or ordinal,
+                chapter,
+            ))
+        entries.append((source_index, {"title": title, "paragraphs": translated["paragraphs"]}))
+        entries.sort(key=lambda item: item[0])
+        output_entries = []
+        if chapters and is_novel_title_entry(chapters, 0):
+            output_entries.append(chapters[0])
+        output_entries.extend(chapter for _, chapter in entries)
+        mode = "w"
+    else:
+        output_entries = [{"title": title, "paragraphs": translated["paragraphs"]}]
+        mode = "a"
+
+    with open(output_file, mode, encoding="utf-8") as f_out:
+        for chapter in output_entries:
+            f_out.write(f"=== {chapter['title']} ===\n\n")
+            for paragraph in chapter["paragraphs"]:
+                f_out.write(f"{paragraph}\n\n")
+            f_out.write(CHAPTER_SEP)
+
+
 def translate_novel_stream(chapter_generator, output_file: str, glossary_path: str | None,
                             api_key: str, model: str = DEFAULT_MODEL,
                             temperature: float = 1.3, thinking: bool = True,
@@ -1207,14 +1262,15 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                             on_chapter=None, should_stop=None,
                             on_balance_error=None, term_categories: str = "các thuật ngữ đặc thù của truyện, thành ngữ, tục ngữ",
                             reasoning_effort: str | None = DEFAULT_REASONING_EFFORT,
-                            avoid_peak: bool = True) -> list[dict]:
+                            avoid_peak: bool = True, max_chapters: int = 0) -> list[dict]:
     """Dich tung chuong tu generator (crawl_chapters_stream) ngay lap tuc khi co du lieu.
 
     Khac voi translate_novel (doc tu file co san), ham nay nhan chapter_generator -
     mot generator yield dict chuong ngay sau khi crao. Dich xong tung chuong, ghi ket
     qua vao output_file luon, khong doi den khi cao xong toan bo.
 
-    Ung dung: pipeline --stream --chapters X: cao X chuong roi dich luon tung chuong.
+    Ung dung: pipeline --stream --chapters X: quet tu chuong 1, bo qua chuong da dich
+    va dung sau khi dich them X chuong moi.
     style_guide: truyen thang tu ket qua detect_style_guide neu da phan tich truoc do.
     avoid_peak: mac dinh True - cho het gio cao diem truoc moi chuong (nhu translate_novel).
     """
@@ -1226,17 +1282,13 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
     idiom_path = idioms_path_for(output_file)
     idiom_memory = load_idiom_memory(idiom_path)
 
-    # Lay so chuong da dich truoc do de tinh idx tuong doi
-    from crawler import count_chapters as _count
-    already_done = _count(output_file)
-    if already_done == 0:
+    translated_indexes = _translated_source_indexes(output_file)
+    if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
         # File tho cua crawler luon co muc tieu de o dau; ghi muc do vao file dich truoc de
-        # che do stream va che do thuong dung chung chi so (doi che do giua chung khong lech).
+        # che do stream va che do thuong dung chung chi so.
         with open(output_file, "a", encoding="utf-8") as f_head:
             f_head.write("=== TRUYỆN ===\n\n" + CHAPTER_SEP)
-        already_done = 1
-    title_offset = 1 if is_novel_title_entry(parse_chapters(output_file), 0) else 0
-    log(f"Da dich {already_done - title_offset} chuong truoc do, bat dau ghi tiep.")
+    log(f"Da dich {len(translated_indexes)} chuong truoc do, quet tu chuong 1.")
 
     style_block = f"Van phong ap dung cho toan truyen: {style_guide}\n" if style_guide else ""
     system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
@@ -1246,10 +1298,26 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
     )
 
     failed_chapters: list[dict] = []
-    idx = already_done
+    fallback_source_index = 0
+    translated_this_run = 0
 
-    with open(output_file, "a", encoding="utf-8") as f_out:
+    with nullcontext():
         for chapter in chapter_generator:
+            source_index = chapter.get("_source_index")
+            if not isinstance(source_index, int) or source_index < 1:
+                source_index = _source_index_from_title(chapter.get("title", ""))
+            if source_index is None:
+                source_index = fallback_source_index + 1
+            fallback_source_index = max(fallback_source_index, source_index)
+
+            if source_index in translated_indexes:
+                log(f"[Bo qua] Chuong nguon {source_index} da dich truoc do.")
+                continue
+
+            if max_chapters > 0 and translated_this_run >= max_chapters:
+                log(f"Da dich them du {max_chapters} chuong theo yeu cau.")
+                break
+
             if should_stop and should_stop():
                 log("Da dung theo yeu cau.")
                 break
@@ -1257,67 +1325,68 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
             if avoid_peak and wait_until_offpeak(log=log, should_stop=should_stop):
                 break  # nguoi dung dung luc dang cho het gio cao diem
 
-            idx += 1
-
             # Kiem tra write-ahead cache
-            cached = _load_cache(output_file, idx)
+            cached = _load_cache(output_file, source_index)
             if cached is not None:
-                log(f"[{idx}] Cache hit - bo qua API call")
+                log(f"[{source_index}] Cache hit - bo qua API call")
                 translated = cached
             else:
                 try:
                     translated = translate_chapter(
                         chapter, system_prompt, api_key, model,
                         temperature, thinking=thinking, should_stop=should_stop,
-                        chapter_idx=idx - title_offset, log=log, glossary=glossary,
+                        chapter_idx=source_index, log=log, glossary=glossary,
                         reasoning_effort=reasoning_effort, idiom_memory=idiom_memory
                     )
                     # Ghi write-ahead cache ngay khi API tra ve thanh cong
-                    _save_cache(output_file, idx, translated)
+                    _save_cache(output_file, source_index, translated)
                 except InsufficientBalanceError as e:
                     log(f"\n{'='*60}")
                     log(f"[!!! HET SO DU API !!!] {e}")
                     log(f"{'='*60}")
                     if on_balance_error:
                         on_balance_error(str(e))
-                    failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                    failed_chapters.append({"index": source_index, "title": chapter["title"], "error": str(e)})
                     break
                 except Exception as e:
-                    log(f"[{idx}] LOI dich '{chapter['title']}': {type(e).__name__}: {e}")
-                    failed_chapters.append({"index": idx, "title": chapter["title"], "error": str(e)})
+                    log(f"[{source_index}] LOI dich '{chapter['title']}': {type(e).__name__}: {e}")
+                    failed_chapters.append({"index": source_index, "title": chapter["title"], "error": str(e)})
                     continue
 
-            translated["title"] = f"Chương {idx - title_offset}"  # ghi de ca ket qua cache cu
-            f_out.write(f"=== {translated['title']} ===\n\n")
-            for p in translated["paragraphs"]:
-                f_out.write(f"{p}\n\n")
-            f_out.write(CHAPTER_SEP)
-            f_out.flush()
+            translated["title"] = f"Chương {source_index}"  # ghi de ca ket qua cache cu
+            _write_stream_translation(output_file, source_index, translated)
             # Ghi file chinh thanh cong -> xoa cache
-            _delete_cache(output_file, idx)
+            _delete_cache(output_file, source_index)
 
             added = merge_new_terms(glossary, translated["new_terms"])
             actual_new_count = len(added)
             if added:
                 save_glossary(glossary_path, glossary)
-                glossary_meta = update_glossary_meta(glossary_meta, added, idx)
+                glossary_meta = update_glossary_meta(glossary_meta, added, source_index)
                 save_glossary_meta(glossary_path, glossary_meta)
-            idioms_added = merge_idioms(idiom_memory, translated.get("idioms") or {}, idx)
+            idioms_added = merge_idioms(idiom_memory, translated.get("idioms") or {}, source_index)
             if translated.get("idioms"):
                 save_idiom_memory(idiom_path, idiom_memory)
 
-            log(f"[{idx}] [Dich] {chapter['title']} -> {translated['title']}"
+            translated_this_run += 1
+            translated_indexes.add(source_index)
+            progress = f"[{translated_this_run}/{max_chapters}]" if max_chapters > 0 else f"[{source_index}]"
+            log(f"{progress} [Dich] chuong nguon {source_index}: {chapter['title']} -> {translated['title']}"
                 + (f" (+{actual_new_count} thuat ngu moi)" if actual_new_count > 0 else "")
                 + (f" (+{len(idioms_added)} thanh ngu moi)" if idioms_added else ""))
 
             if on_chapter:
-                on_chapter(idx, None, translated)
+                on_chapter(source_index, max_chapters or None, translated)
 
             # Cleanup meta moi 20 chuong
-            if idx % 20 == 0:
-                glossary_meta, removed = cleanup_glossary_meta(glossary_meta, idx)
+            if source_index % 20 == 0:
+                glossary_meta, removed = cleanup_glossary_meta(glossary_meta, source_index)
                 if removed:
                     save_glossary_meta(glossary_path, glossary_meta)
+
+            if max_chapters > 0 and translated_this_run >= max_chapters:
+                log(f"Da dich them du {max_chapters} chuong theo yeu cau.")
+                break
 
     if failed_chapters:
         log(f"That bai {len(failed_chapters)} chuong trong luot stream nay.")

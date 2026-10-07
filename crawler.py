@@ -7,6 +7,7 @@ import random
 import cloudscraper
 
 from bs4 import BeautifulSoup
+from sources import find_adapter
 
 DEFAULT_START_URL = "https://www.wa01.com/novel/pagea/disanchongrenge-changshuxin_1.html"
 DEFAULT_OUTPUT = "truyen_de_tam_trung_nhan_cach.txt"
@@ -60,6 +61,19 @@ def is_novel_title_entry(chapters: list[dict], index: int) -> bool:
     return index == 0 and bool(chapters) and not chapters[0].get("paragraphs")
 
 
+def iter_chapters_from_file(input_file: str):
+    """Yield cac chuong co noi dung theo thu tu nguon, kem chi so 1-based."""
+    chapters = parse_chapters(input_file)
+    source_index = 0
+    for index, chapter in enumerate(chapters):
+        if is_novel_title_entry(chapters, index):
+            continue
+        source_index += 1
+        item = dict(chapter)
+        item["_source_index"] = source_index
+        yield item
+
+
 def count_chapters(file_path: str) -> int:
     """Dem so chuong da hoan tat trong 1 file dinh dang === ... === (ca file tho da cao
     lan file da dich deu dung chung dinh dang nay) - dung "="*40 lam moc ket thuc 1
@@ -83,6 +97,10 @@ def guess_title(text: str) -> str:
 
 
 def crawl_chapter(url, log=print):
+    adapter = find_adapter(url)
+    if adapter:
+        return adapter.crawl_chapter(url, log=log)
+
     log(f"Fetching: {url}")
     try:
         # Xoay vong cau hinh browser de sinh TLS fingerprint tuong ung
@@ -135,6 +153,151 @@ def crawl_chapter(url, log=print):
         return False  # Indication to retry or pause
 
 
+def _write_chapter(file_handle, result):
+    file_handle.write(f"=== {result['title']} ===\n\n")
+    for para in result['paragraphs']:
+        file_handle.write(f"{para}\n\n")
+    file_handle.write(CHAPTER_SEP)
+    file_handle.flush()
+
+
+def _adapter_start_index(adapter, start_url, chapters, log):
+    finder = getattr(adapter, "find_start_index", None)
+    if finder:
+        return finder(start_url, chapters, log=log)
+
+    chapter_path = start_url.rstrip("/").split("?")[0]
+    for index, chapter in enumerate(chapters):
+        if chapter.get("url", "").rstrip("/").split("?")[0] == chapter_path:
+            return index
+    return 0
+
+
+def _get_adapter_chapters(adapter, start_url, log):
+    lister = getattr(adapter, "list_chapters", None) or getattr(adapter, "get_chapters")
+    return lister(start_url, log=log)
+
+
+def _crawl_novel_with_adapter(start_url, output_file, adapter, log, should_stop):
+    chapters = _get_adapter_chapters(adapter, start_url, log)
+    if not chapters:
+        log("Khong co danh sach chuong de cao. Dung lai.")
+        return 0
+
+    existing = count_chapters(output_file)
+    requested_index = _adapter_start_index(adapter, start_url, chapters, log)
+    chapter_index = existing if existing else requested_index
+    if existing:
+        log(f"Da co {existing} chuong trong {output_file}, tiep tuc tu chuong {chapter_index + 1}.")
+    if chapter_index >= len(chapters):
+        log("Da het muc luc. Ket thuc crawl.")
+        return 0
+
+    consecutive_errors = 0
+    saved = 0
+    log(f"Bat dau cao tu chuong {chapter_index + 1} vao {output_file}...")
+
+    with open(output_file, "a", encoding="utf-8") as f:
+        if f.tell() == 0:
+            f.write("=== TRUYỆN ===\n\n")
+
+        while chapter_index < len(chapters):
+            chapter = chapters[chapter_index]
+            result = crawl_chapter(chapter["url"], log=log)
+
+            if result is None:
+                log("Trang chuong khong ton tai hoac khong co noi dung. Dung crawl.")
+                break
+
+            if result is False:
+                consecutive_errors += 1
+                if consecutive_errors > 3:
+                    log("Qua nhieu loi mang lien tiep. Dung lai.")
+                    break
+                log("Thu lai sau 5 giay...")
+                time.sleep(5)
+                continue
+
+            consecutive_errors = 0
+            _write_chapter(f, result)
+            log(f"Da luu chuong {chapter_index + 1}: {result['title']}")
+            saved += 1
+            chapter_index += 1
+
+            if should_stop and should_stop():
+                log("Da dung theo yeu cau. Chay lai se tu tiep tuc tu day.")
+                break
+
+            if chapter_index < len(chapters):
+                time.sleep(random.uniform(2.0, 5.0))
+
+    return saved
+
+
+def _crawl_stream_with_adapter(start_url, output_file, max_chapters, adapter, log, should_stop,
+                               from_start=False):
+    chapters = _get_adapter_chapters(adapter, start_url, log)
+    if not chapters:
+        log("Khong co danh sach chuong de cao. Dung lai.")
+        return
+
+    existing_chapters = list(iter_chapters_from_file(output_file)) if from_start and os.path.exists(output_file) else []
+    for chapter in existing_chapters:
+        yield chapter
+
+    existing = len(existing_chapters) if from_start else count_chapters(output_file)
+    requested_index = _adapter_start_index(adapter, start_url, chapters, log)
+    chapter_index = max(existing, requested_index) if from_start else (existing if existing else requested_index)
+    if existing:
+        if from_start:
+            log(f"Da co {existing} chuong trong file tho, kiem tra tu chuong 1 truoc khi cao tiep.")
+        else:
+            log(f"Da co {existing} chuong, tiep tuc tu chuong {chapter_index + 1}.")
+
+    consecutive_errors = 0
+    saved = 0
+    limit_info = f" (gioi han {max_chapters} chuong)" if max_chapters > 0 and not from_start else ""
+    log(f"Bat dau cao tu chuong {chapter_index + 1}{limit_info}...")
+
+    with open(output_file, "a", encoding="utf-8") as f:
+        if f.tell() == 0:
+            f.write("=== TRUYỆN ===\n\n")
+
+        while chapter_index < len(chapters):
+            if not from_start and max_chapters > 0 and saved >= max_chapters:
+                log(f"Da cao du {max_chapters} chuong theo yeu cau.")
+                break
+            if should_stop and should_stop():
+                log("Da dung theo yeu cau.")
+                break
+
+            chapter = chapters[chapter_index]
+            result = crawl_chapter(chapter["url"], log=log)
+            if result is None:
+                log("Trang chuong khong ton tai hoac khong co noi dung. Dung crawl.")
+                break
+            if result is False:
+                consecutive_errors += 1
+                if consecutive_errors > 3:
+                    log("Qua nhieu loi lien tiep. Dung lai.")
+                    break
+                log("Thu lai sau 5 giay...")
+                time.sleep(5)
+                continue
+
+            consecutive_errors = 0
+            _write_chapter(f, result)
+            log(f"[Cao] Chuong {chapter_index + 1}: {result['title']}")
+            saved += 1
+            chapter_index += 1
+            streamed = dict(result)
+            streamed["_source_index"] = chapter_index
+            yield streamed
+
+            if chapter_index < len(chapters):
+                time.sleep(random.uniform(2.0, 5.0))
+
+
 def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -> int:
     """Cao tuan tu tu chuong dau con thieu, tang so chuong trong URL len 1 moi lan, den
     khi gap 404. Neu output_file da co san N chuong (vd chay lan truoc bi dung giua
@@ -142,6 +305,10 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
     dung start_url de suy ra mau URL (base_url/suffix), khong dung de xac dinh diem
     bat dau, tranh cao trung lap khi resume. Tra ve so chuong cao them trong lan nay."""
     start_url = start_url.strip().rstrip('.')
+    adapter = find_adapter(start_url)
+    if adapter:
+        return _crawl_novel_with_adapter(start_url, output_file, adapter, log, should_stop)
+
     match = re.match(r"(.*_)(\d+)(\.html?)$", start_url)
     if not match:
         raise ValueError(f"start_url phai ket thuc bang _<so>.html hoac .htm, vi du '..._1.html'. Nhan: '{start_url}'")
@@ -199,27 +366,43 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
 
 
 def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 0,
-                           log=print, should_stop=None):
+                           log=print, should_stop=None, from_start=False):
     """Generator: cao tung chuong, ghi vao output_file, yield ngay dict chuong do de
     caller co the dich luon ma khong can doi cao het. Dung cho stream pipeline.
 
     max_chapters: gioi han so chuong can cao (0 = khong gioi han, cao toan bo truyen).
-    Yield: dict {'title': ..., 'paragraphs': [...]} sau moi chuong cao thanh cong.
+    from_start: yield lai cac chuong da cao tu dau de pipeline co the bo qua chuong da dich,
+        sau do moi cao tiep chuong moi.
+    Yield: dict {'title': ..., 'paragraphs': [...], '_source_index': N}.
     """
     start_url = start_url.strip().rstrip('.')
+    adapter = find_adapter(start_url)
+    if adapter:
+        yield from _crawl_stream_with_adapter(
+            start_url, output_file, max_chapters, adapter, log, should_stop, from_start
+        )
+        return
+
     match = re.match(r"(.*_)(\d+)(\.html?)$", start_url)
     if not match:
         raise ValueError(f"start_url phai ket thuc bang _<so>.html hoac .htm. Nhan: '{start_url}'")
 
     base_url, url_chapter_num, suffix = match.group(1), int(match.group(2)), match.group(3)
-    existing = count_chapters(output_file)
-    chapter_num = existing + 1 if existing else url_chapter_num
+    existing_chapters = list(iter_chapters_from_file(output_file)) if from_start and os.path.exists(output_file) else []
+    for chapter in existing_chapters:
+        yield chapter
+
+    existing = len(existing_chapters) if from_start else count_chapters(output_file)
+    chapter_num = max(existing + 1, url_chapter_num) if from_start else (existing + 1 if existing else url_chapter_num)
     if existing:
-        log(f"Da co {existing} chuong, tiep tuc tu chuong {chapter_num}.")
+        if from_start:
+            log(f"Da co {existing} chuong trong file tho, kiem tra tu chuong 1 truoc khi cao tiep.")
+        else:
+            log(f"Da co {existing} chuong, tiep tuc tu chuong {chapter_num}.")
 
     consecutive_errors = 0
     saved = 0
-    limit_info = f" (gioi han {max_chapters} chuong)" if max_chapters > 0 else ""
+    limit_info = f" (gioi han {max_chapters} chuong)" if max_chapters > 0 and not from_start else ""
     log(f"Bat dau cao tu chuong {chapter_num}{limit_info}...")
 
     with open(output_file, "a", encoding="utf-8") as f:
@@ -227,7 +410,7 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
             f.write("=== TRUYỆN ===\n\n")
 
         while True:
-            if max_chapters > 0 and saved >= max_chapters:
+            if not from_start and max_chapters > 0 and saved >= max_chapters:
                 log(f"Da cao du {max_chapters} chuong theo yeu cau.")
                 break
 
@@ -262,7 +445,9 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
             saved += 1
             chapter_num += 1
 
-            yield result  # Giao ngay cho pipeline de dich
+            streamed = dict(result)
+            streamed["_source_index"] = chapter_num - 1
+            yield streamed  # Giao ngay cho pipeline de dich
 
             time.sleep(random.uniform(2.0, 5.0))  # Polite crawling delay
 
