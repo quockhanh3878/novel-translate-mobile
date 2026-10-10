@@ -63,6 +63,16 @@ def _termux_wake_unlock():
         except Exception:
             pass
 
+
+def _termux_notify(title: str, content: str) -> None:
+    """Gui thong bao Android qua termux-notification khi chay tren Termux."""
+    if _IS_TERMUX:
+        try:
+            subprocess.run(["termux-notification", "-t", str(title), "-c", str(content)],
+                           timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
 def save_api_key(key):
     key = key.strip()
     if not key:
@@ -243,6 +253,33 @@ def _web_file(rel: str):
 
 # Thu muc Documents chung tren Android Termux de app doc sach de dang quet thay
 SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
+
+
+def _export_to_android_storage(epub_path: str) -> str | None:
+    """Sao chep file EPUB sang thu muc Documents/Download tren Android neu co quyen bo nho."""
+    if not os.path.isfile(epub_path):
+        return None
+
+    candidates = [
+        SHARED_DOCUMENTS,
+        os.path.expanduser("~/storage/shared/Download"),
+        os.path.expanduser("~/storage/downloads"),
+        "/sdcard/Documents",
+        "/sdcard/Download",
+    ]
+    filename = os.path.basename(epub_path)
+    for folder in candidates:
+        try:
+            folder_path = Path(folder)
+            parent = folder_path.parent
+            if parent.is_dir() or folder_path.is_dir():
+                folder_path.mkdir(parents=True, exist_ok=True)
+                dest = folder_path / filename
+                shutil.copy2(epub_path, str(dest))
+                return str(dest)
+        except Exception:
+            continue
+    return None
 
 def force_kill_after_grace(proc, grace=5):
     """terminate() (SIGTERM) thuong du, nhung neu tien trinh khong thoat trong
@@ -444,18 +481,18 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                 STATE["error"] = f"Loi (ma thoat {proc.returncode}), xem chi tiet ben duoi."
                 STATE["error_detail"] = STATE["log"][-4000:]
                 STATE["step"] = "idle"
+                _termux_notify(f"Lỗi dịch: {title}", f"Mã thoát {proc.returncode}")
                 return
                 
             STATE["step"] = "done"
             epub_path = epub_file if paths["has_custom_output"] else paths["epub_path"].name
-            if os.path.isdir(SHARED_DOCUMENTS):
-                try:
-                    shutil.copy(epub_path, SHARED_DOCUMENTS)
-                    STATE["epub"] = f"{epub_path} (da copy vao Documents)"
-                except Exception as e:
-                    STATE["epub"] = f"{epub_path} (Loi copy: {str(e)})"
+            exported = _export_to_android_storage(epub_file)
+            if exported:
+                target_folder_name = os.path.basename(os.path.dirname(exported))
+                STATE["epub"] = f"{epub_path} (da copy vao {target_folder_name})"
             else:
                 STATE["epub"] = epub_path
+            _termux_notify(f"Dịch xong: {title}", f"EPUB đã sẵn sàng: {paths['epub_path'].name}")
             REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
                 
     except Exception as e:
@@ -465,6 +502,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             STATE["error_detail"] = traceback.format_exc()
             STATE["step"] = "idle"
             CURRENT_PROC = None
+            _termux_notify(f"Lỗi hệ thống: {title}", str(e))
     finally:
         _termux_wake_unlock()
 

@@ -20,7 +20,8 @@ else
     git clone "$REPO_URL" "$DEST"
 fi
 cd "$DEST"
-pip install -r requirements.txt
+chmod +x run_termux.sh update_termux.sh 2>/dev/null || true
+pip install --break-system-packages -r requirements.txt 2>/dev/null || pip install -r requirements.txt
 
 echo "== 3/5: DeepSeek API key =="
 if [ ! -f .env ]; then
@@ -32,8 +33,9 @@ else
 fi
 
 echo "== 4/5: Cap quyen luu EPUB ra bo nho may (se hien popup xin quyen) =="
-termux-setup-storage
+termux-setup-storage || true
 sleep 2
+mkdir -p "$HOME/storage/shared/Documents" "$HOME/storage/shared/Download" 2>/dev/null || true
 
 echo "== 5/5: Tu dong mo GUI web moi lan mo Termux =="
 if ! grep -q web_gui.py "$HOME/.bashrc" 2>/dev/null; then

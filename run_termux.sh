@@ -7,14 +7,18 @@
 set -e
 cd "$(dirname "$0")"
 
-if [ -n "$1" ] && [ -n "$2" ]; then
-    INPUT="$1"; TITLE="$2"
+if [ -n "$1" ]; then
+    INPUT="$1"; TITLE="${2:-}"
 else
-    INPUT=$(termux-dialog text -t "URL chuong 1 (hoac duong dan file da cao san)" | python3 -c "import json,sys;print(json.load(sys.stdin).get('text',''))")
-    TITLE=$(termux-dialog text -t "Ten truyen" | python3 -c "import json,sys;print(json.load(sys.stdin).get('text',''))")
+    INPUT=$(termux-dialog text -t "URL chuong 1 (hoac duong dan file da cao san)" | python3 -c "import json,sys;print(json.load(sys.stdin).get('text',''))" 2>/dev/null || true)
+    TITLE=$(termux-dialog text -t "Ten truyen (de trong se tu doan)" | python3 -c "import json,sys;print(json.load(sys.stdin).get('text',''))" 2>/dev/null || true)
 fi
 
-[ -z "$INPUT" ] || [ -z "$TITLE" ] && { echo "Thieu URL/file hoac ten truyen."; exit 1; }
+[ -z "$INPUT" ] && { echo "Thieu URL hoac file tho."; exit 1; }
+
+if [ -z "$TITLE" ]; then
+    TITLE=$(python3 -c "from crawler import guess_title; print(guess_title('$INPUT'))" 2>/dev/null || echo "Truyen")
+fi
 
 case "$INPUT" in
     http*) PIPE_ARGS=(--start-url "$INPUT") ;;

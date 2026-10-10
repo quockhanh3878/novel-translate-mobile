@@ -11,7 +11,8 @@ sleep 1
 echo "== 2/3: Cap nhat code moi nhat =="
 git fetch origin
 git reset --hard origin/main
-pip install -r requirements.txt
+chmod +x run_termux.sh update_termux.sh setup_termux.sh 2>/dev/null || true
+pip install --break-system-packages -r requirements.txt 2>/dev/null || pip install -r requirements.txt
 
 echo "== 3/3: Khoi dong lai Web GUI =="
 nohup python web_gui.py > web_gui.log 2>&1 &
