@@ -31,7 +31,7 @@ def sanitize_filename(name: str, default: str = "truyen") -> str:
 
 def validate_output_dir(dir_path: str | Path | None, create: bool = True) -> tuple[bool, Path | None, str]:
     """Kiem tra va chuan hoa thu muc dau ra.
-    
+
     Neu dir_path rong: mac dinh tra ve thu muc lam viec hien tai (Path.cwd()).
     Neu dir_path co gia tri:
     - Kiem tra path traversal nguy hiem hoac ky tu khong hop le.
@@ -80,7 +80,7 @@ def resolve_pipeline_paths(
     cwd: Path | None = None,
 ) -> dict:
     """Xac dinh toan bo bo duong dan chuan hoa cho pipeline.
-    
+
     Quy uoc:
     - Khong chon noi luu (output_dir rong):
       + URL: raw, translated (.viet.txt), epub nam tai thu muc mac dinh (cwd).
@@ -91,7 +91,7 @@ def resolve_pipeline_paths(
     """
     base_cwd = (cwd or Path.cwd()).resolve()
     has_custom_output = bool(output_dir and str(output_dir).strip())
-    
+
     if has_custom_output:
         ok, out_path, err = validate_output_dir(output_dir, create=True)
         if not ok or out_path is None:

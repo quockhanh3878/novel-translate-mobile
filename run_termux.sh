@@ -17,7 +17,7 @@ fi
 [ -z "$INPUT" ] && { echo "Thieu URL hoac file tho."; exit 1; }
 
 if [ -z "$TITLE" ]; then
-    TITLE=$(python3 -c "from crawler import guess_title; print(guess_title('$INPUT'))" 2>/dev/null || echo "Truyen")
+    TITLE=$(INPUT="$INPUT" python3 -c 'import os; from crawler import guess_title; print(guess_title(os.environ["INPUT"]))' 2>/dev/null || echo "Truyen")
 fi
 
 case "$INPUT" in
@@ -26,12 +26,16 @@ case "$INPUT" in
 esac
 
 termux-wake-lock
-python pipeline.py "${PIPE_ARGS[@]}" --title "$TITLE" > "pipeline_${TITLE}.log" 2>&1
-STATUS=$?
+LOG_FILE="pipeline.log"
+if python pipeline.py "${PIPE_ARGS[@]}" --title "$TITLE" > "$LOG_FILE" 2>&1; then
+    STATUS=0
+else
+    STATUS=$?
+fi
 termux-wake-unlock
 
 if [ $STATUS -eq 0 ]; then
     termux-notification -t "Xong: $TITLE" -c "EPUB da san sang: ${TITLE}.epub"
 else
-    termux-notification -t "Loi: $TITLE" -c "Xem pipeline_${TITLE}.log"
+    termux-notification -t "Loi: $TITLE" -c "Xem $LOG_FILE"
 fi

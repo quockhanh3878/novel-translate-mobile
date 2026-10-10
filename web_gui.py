@@ -704,7 +704,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             valid_name = (name and name == os.path.basename(name) and not name.startswith(".")
                           and os.sep not in name and (not os.altsep or os.altsep not in name)
                           and name.lower().endswith(".epub") and name != TEST_EPUB_NAME)
-            
+
             target_path = None
             if valid_name:
                 allowed_roots = [Path.cwd().resolve(), *[Path(d).resolve() for d in REGISTERED_OUTPUT_DIRS]]
