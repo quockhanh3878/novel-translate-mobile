@@ -116,6 +116,8 @@ def demo():
     # --- Server: file tinh, chong ../, thu vien, tai file ---
     with open("Dệ Tam.epub", "wb") as f:
         f.write(b"PK-fake-epub")
+    with open("Dệ Tam.pdf", "wb") as f:
+        f.write(b"%PDF-fake")
     with open("test_dung_thu.epub", "wb") as f:
         f.write(b"PK-test")
     with open("bi_mat.txt", "w", encoding="utf-8") as f:
@@ -148,14 +150,18 @@ def demo():
 
         status, _, body = get(base, "/library")
         names = [item["name"] for item in json.loads(body)["items"]]
-        assert names == ["Dệ Tam.epub"], names  # khong liet ke file dich thu
+        assert set(names) == {"Dệ Tam.epub", "Dệ Tam.pdf"}, names  # khong liet ke file dich thu
 
         quoted = urllib.parse.quote("Dệ Tam.epub")
         status, headers, body = get(base, "/download?name=" + quoted)
         assert status == 200 and body == b"PK-fake-epub"
         assert headers["Content-Type"] == "application/epub+zip"
         assert "filename*=UTF-8''" + quoted in headers["Content-Disposition"]
-        for bad in ("../web_gui.py", "..%5Cweb_gui.py", "bi_mat.txt", "test_dung_thu.epub", ".env", ""):
+        quoted_pdf = urllib.parse.quote("Dệ Tam.pdf")
+        status, headers, body = get(base, "/download?name=" + quoted_pdf)
+        assert status == 200 and body == b"%PDF-fake"
+        assert headers["Content-Type"] == "application/pdf"
+        for bad in ("../web_gui.py", "..%5Cweb_gui.py", "bi_mat.txt", "test_dung_thu.epub", "test_dung_thu.pdf", ".env", ""):
             assert get(base, "/download?name=" + bad)[0] == 404, bad
 
         # Test safe upload qua /upload_raw
@@ -174,15 +180,21 @@ def demo():
         custom_epub = os.path.join(custom_out_dir, "CustomTruyen.epub")
         with open(custom_epub, "wb") as f:
             f.write(b"PK-custom-epub")
+        custom_pdf = os.path.join(custom_out_dir, "CustomTruyen.pdf")
+        with open(custom_pdf, "wb") as f:
+            f.write(b"%PDF-custom")
 
         # Goi /library co tham so output_dir
         status, _, body = get(base, "/library?output_dir=" + urllib.parse.quote(custom_out_dir))
         names = [item["name"] for item in json.loads(body)["items"]]
         assert "CustomTruyen.epub" in names, names
+        assert "CustomTruyen.pdf" in names, names
 
         # Tai file tu custom output_dir
         status, headers, body = get(base, "/download?name=" + urllib.parse.quote("CustomTruyen.epub") + "&output_dir=" + urllib.parse.quote(custom_out_dir))
         assert status == 200 and body == b"PK-custom-epub"
+        status, headers, body = get(base, "/download?name=" + urllib.parse.quote("CustomTruyen.pdf") + "&output_dir=" + urllib.parse.quote(custom_out_dir))
+        assert status == 200 and body == b"%PDF-custom" and headers["Content-Type"] == "application/pdf"
 
         # /shutdown va /open_data_dir chi co khi launcher gan SHUTDOWN_HOOK / tren Windows
         req = urllib.request.Request(base + "/shutdown", method="POST", data=b"")
@@ -202,7 +214,7 @@ def demo():
         web_gui._worker_command = lambda: [sys.executable, "-u", "-c", fake_ok]
         web_gui.run_pipeline("truyen_tho.txt", "Truyen Gia")
         assert web_gui.STATE["running"] is False and web_gui.STATE["step"] == "done", web_gui.STATE
-        assert web_gui.STATE["epub"] == "Truyen Gia.epub" and web_gui.STATE["error"] is None
+        assert web_gui.STATE["epub"] == "Truyen Gia.epub" and web_gui.STATE["pdf"] == "Truyen Gia.pdf" and web_gui.STATE["error"] is None
 
         # Test run_pipeline voi output_dir tuy chon
         job_out_dir = os.path.join(_work.name, "JobOutput")
@@ -210,6 +222,7 @@ def demo():
         assert web_gui.STATE["running"] is False and web_gui.STATE["step"] == "done"
         assert web_gui.STATE["output_dir"] == str(Path(job_out_dir).resolve())
         assert web_gui.STATE["epub"] == str(Path(job_out_dir).resolve() / "Truyen Job.epub")
+        assert web_gui.STATE["pdf"] == str(Path(job_out_dir).resolve() / "Truyen Job.pdf")
 
         fake_bad = "import sys; print('boom'); sys.exit(3)"
         web_gui._worker_command = lambda: [sys.executable, "-u", "-c", fake_bad]

@@ -135,10 +135,12 @@ def resolve_pipeline_paths(
     if has_custom_output:
         translated_path = target_dir / f"{raw_path.name}.viet.txt"
         epub_path = target_dir / f"{safe_title}.epub"
+        pdf_path = target_dir / f"{safe_title}.pdf"
     else:
         # Tuong thich tuyet doi voi quy uoc cu khi khong chon noi luu
         translated_path = base_cwd / f"{raw_path.name}.viet.txt" if not is_url else base_cwd / f"{raw_path.name}.viet.txt"
         epub_path = base_cwd / f"{safe_title}.epub"
+        pdf_path = base_cwd / f"{safe_title}.pdf"
 
     # Duong dan cac file bo tro
     style_path = Path(f"{str(translated_path).rsplit('.', 1)[0]}_style.txt")
@@ -150,6 +152,7 @@ def resolve_pipeline_paths(
         "raw_path": raw_path,
         "translated_path": translated_path,
         "epub_path": epub_path,
+        "pdf_path": pdf_path,
         "style_path": style_path,
         "output_dir": target_dir,
         "has_custom_output": has_custom_output,

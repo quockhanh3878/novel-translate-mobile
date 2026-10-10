@@ -551,7 +551,7 @@
         } else if (s.step === 'validating') {
             showProgress('Đang kiểm tra chất lượng bản dịch...', '', null);
         } else if (s.step === 'packaging') {
-            showProgress('Đang đóng gói file EPUB...', '', null);
+            showProgress('Đang đóng gói file EPUB/PDF...', '', null);
         } else {
             progressArea.hidden = true;
         }
@@ -560,6 +560,7 @@
     function renderResult(s) {
         if (s.epub) {
             setResult('success', 'Thành công. File EPUB lưu tại: ' + s.epub);
+            if (s.pdf) resultEl.textContent += ' | PDF: ' + s.pdf;
         } else if (s.stop_requested && !s.running) {
             setResult('warn', 'Đã dừng theo yêu cầu. Bấm "Bắt đầu dịch" để chạy tiếp, các chương đã xong được giữ nguyên.');
         } else if (s.error) {
@@ -588,6 +589,7 @@
             fileInfo.textContent = s.raw_file
                 ? 'File thô: ' + s.raw_file + '  |  File dịch: ' + s.translated_file + (s.epub_path ? '  |  EPUB: ' + s.epub_path : '')
                 : '';
+            if (s.raw_file && s.pdf_path) fileInfo.textContent += '  |  PDF: ' + s.pdf_path;
             renderResult(s);
 
             lastStatus = s;
@@ -617,7 +619,7 @@
         if (!items.length) {
             const empty = document.createElement('li');
             empty.className = 'library-empty';
-            empty.textContent = 'Chưa có truyện nào được đóng gói. File EPUB sẽ hiện ở đây sau khi dịch.';
+            empty.textContent = 'Chưa có truyện nào được đóng gói. File EPUB/PDF sẽ hiện ở đây sau khi dịch.';
             libraryList.appendChild(empty);
             return;
         }
@@ -629,7 +631,8 @@
             info.className = 'library-info';
             const name = document.createElement('div');
             name.className = 'library-name';
-            name.textContent = item.name.replace(/\.epub$/i, '');
+            const isPdf = /\.pdf$/i.test(item.name);
+            name.textContent = item.name.replace(/\.(epub|pdf)$/i, '');
             name.title = item.name;
             const meta = document.createElement('div');
             meta.className = 'library-meta';
@@ -641,7 +644,7 @@
             link.className = 'btn-small accent';
             link.href = '/download?name=' + encodeURIComponent(item.name);
             link.setAttribute('download', item.name);
-            link.textContent = 'Tải EPUB';
+            link.textContent = isPdf ? 'Tải PDF' : 'Tải EPUB';
 
             li.appendChild(info);
             li.appendChild(link);
@@ -798,6 +801,11 @@
         testResult.appendChild(head);
         testResult.appendChild(quote);
         testResult.appendChild(link);
+        const pdfLink = document.createElement('a');
+        pdfLink.href = '/download_test_pdf';
+        pdfLink.setAttribute('download', 'test_dung_thu.pdf');
+        pdfLink.textContent = 'Tải file PDF';
+        testResult.appendChild(pdfLink);
         testResult.className = 'modal-result success';
         testResult.hidden = false;
         btnCopyTestError.hidden = true;
@@ -829,7 +837,7 @@
             showTestError('Lỗi kết nối: ' + err.message);
         } finally {
             btnRunTest.disabled = false;
-            btnRunTest.textContent = 'Dịch và tạo EPUB';
+            btnRunTest.textContent = 'Dịch và tạo EPUB/PDF';
         }
     };
 

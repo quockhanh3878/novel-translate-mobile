@@ -1,5 +1,5 @@
 """web_gui.py - GUI web toi thieu (chi http.server chuan lib, khong Flask/Tkinter) de
-chay pipeline.py (cao -> dich DeepSeek API -> dong goi EPUB) tu trinh duyet dien thoai.
+chay pipeline.py (cao -> dich DeepSeek API -> dong goi EPUB va PDF) tu trinh duyet dien thoai.
 
 Chay: python web_gui.py roi mo http://localhost:8000
 Giao dien nam trong thu muc web/ (index.html, app.css, app.js, fonts/).
@@ -21,6 +21,7 @@ from pathlib import Path
 import requests
 
 from build_epub import build_epub
+from build_pdf import build_pdf
 from cost_estimate import estimate_catalog, estimate_file, usd_from_usage
 from sources import find_adapter
 from crawler import guess_title
@@ -163,8 +164,8 @@ def get_deepseek_balance(key=""):
 
 
 def test_translate_handler(chinese_text: str, api_key: str) -> dict:
-    """Dich doan van Trung -> Viet va xuat EPUB de kiem tra toan bo pipeline."""
-    global TEST_EPUB_PATH
+    """Dich doan van Trung -> Viet va xuat EPUB/PDF de kiem tra pipeline."""
+    global TEST_EPUB_PATH, TEST_PDF_PATH
     try:
         system_prompt = TRANSLATE_SYSTEM_PROMPT.format(
             style_guide_block="",
@@ -188,15 +189,21 @@ def test_translate_handler(chinese_text: str, api_key: str) -> dict:
 
             if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
                 os.remove(TEST_EPUB_PATH)
+            if TEST_PDF_PATH and os.path.exists(TEST_PDF_PATH):
+                os.remove(TEST_PDF_PATH)
 
             epub_file = TEST_EPUB_NAME
+            pdf_file = TEST_PDF_NAME
             build_epub(tmp.name, epub_file, "Truyen dung thu", "DeepSeek API")
+            build_pdf(tmp.name, pdf_file, "Truyen dung thu", "DeepSeek API")
             TEST_EPUB_PATH = os.path.abspath(epub_file)
+            TEST_PDF_PATH = os.path.abspath(pdf_file)
 
             return {
                 "success": True,
                 "translated_text": "\n".join(translated["paragraphs"]),
                 "epub_file": epub_file,
+                "pdf_file": pdf_file,
             }
         finally:
             os.unlink(tmp.name)
@@ -210,6 +217,7 @@ STATE = {
     "running": False,
     "log": "",
     "epub": None,
+    "pdf": None,
     "error": None,
     "step": "idle",          # "idle", "crawling", "translating", "packaging", "done"
     "current_chapter": 0,
@@ -226,6 +234,8 @@ LOCK = threading.Lock()
 CURRENT_PROC = None
 TEST_EPUB_PATH = None  # duong dan file EPUB dung thu vua tao
 TEST_EPUB_NAME = "test_dung_thu.epub"
+TEST_PDF_PATH = None  # duong dan file PDF dung thu vua tao
+TEST_PDF_NAME = "test_dung_thu.pdf"
 UPLOAD_DIR = "uploads"  # noi luu file da cao nguoi dung chon tu may
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -255,9 +265,9 @@ def _web_file(rel: str):
 SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
 
 
-def _export_to_android_storage(epub_path: str) -> str | None:
-    """Sao chep file EPUB sang thu muc Documents/Download tren Android neu co quyen bo nho."""
-    if not os.path.isfile(epub_path):
+def _export_to_android_storage(file_path: str) -> str | None:
+    """Sao chep file EPUB/PDF sang thu muc Documents/Download tren Android."""
+    if not os.path.isfile(file_path):
         return None
 
     candidates = [
@@ -267,7 +277,7 @@ def _export_to_android_storage(epub_path: str) -> str | None:
         "/sdcard/Documents",
         "/sdcard/Download",
     ]
-    filename = os.path.basename(epub_path)
+    filename = os.path.basename(file_path)
     for folder in candidates:
         try:
             folder_path = Path(folder)
@@ -275,7 +285,7 @@ def _export_to_android_storage(epub_path: str) -> str | None:
             if parent.is_dir() or folder_path.is_dir():
                 folder_path.mkdir(parents=True, exist_ok=True)
                 dest = folder_path / filename
-                shutil.copy2(epub_path, str(dest))
+                shutil.copy2(file_path, str(dest))
                 return str(dest)
         except Exception:
             continue
@@ -358,13 +368,14 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
     raw_file = str(paths["raw_path"])
     translated_file = str(paths["translated_path"])
     epub_file = str(paths["epub_path"])
+    pdf_file = str(paths["pdf_path"])
     out_dir_str = str(paths["output_dir"])
 
     if paths["is_url"]:
         args += ["--start-url", input_val, "--raw", raw_file]
     else:
         args += ["--raw", raw_file]
-    args += ["--translated", translated_file, "--epub", epub_file]
+    args += ["--translated", translated_file, "--epub", epub_file, "--pdf", pdf_file]
 
     global CURRENT_PROC
     with LOCK:
@@ -372,6 +383,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             running=True,
             log="",
             epub=None,
+            pdf=None,
             error=None,
             error_detail="",
             step="streaming" if stream_mode else "crawling",
@@ -383,6 +395,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             translated_file=translated_file,
             output_dir=out_dir_str,
             epub_path=epub_file,
+            pdf_path=pdf_file,
             cost_spent=0.0,
             cost_model=model,
             allow_peak=allow_peak,
@@ -485,14 +498,17 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                 return
                 
             STATE["step"] = "done"
-            epub_path = epub_file if paths["has_custom_output"] else paths["epub_path"].name
+            epub_display_path = epub_file if paths["has_custom_output"] else paths["epub_path"].name
+            pdf_display_path = pdf_file if paths["has_custom_output"] else paths["pdf_path"].name
             exported = _export_to_android_storage(epub_file)
+            _export_to_android_storage(pdf_file)
             if exported:
                 target_folder_name = os.path.basename(os.path.dirname(exported))
-                STATE["epub"] = f"{epub_path} (da copy vao {target_folder_name})"
+                STATE["epub"] = f"{epub_display_path} (da copy vao {target_folder_name})"
             else:
-                STATE["epub"] = epub_path
-            _termux_notify(f"Dịch xong: {title}", f"EPUB đã sẵn sàng: {paths['epub_path'].name}")
+                STATE["epub"] = epub_display_path
+            STATE["pdf"] = pdf_display_path
+            _termux_notify(f"Dịch xong: {title}", f"EPUB và PDF đã sẵn sàng: {paths['epub_path'].name}")
             REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
                 
     except Exception as e:
@@ -530,7 +546,7 @@ def _pick_directory_dialog() -> str:
 
 
 def _library_items(extra_dir=None) -> list:
-    """Cac file EPUB da dong goi trong thu muc lam viec va cac thu muc dau ra (moi nhat truoc), tru file dich thu."""
+    """Cac file EPUB/PDF da dong goi trong thu muc lam viec va thu muc dau ra."""
     items = []
     seen_names = set()
     dirs_to_scan = [Path.cwd().resolve()]
@@ -552,7 +568,10 @@ def _library_items(extra_dir=None) -> list:
         except OSError:
             continue
         for entry in entries:
-            if not entry.is_file() or not entry.name.lower().endswith(".epub") or entry.name == TEST_EPUB_NAME:
+            suffix = Path(entry.name).suffix.lower()
+            if not entry.is_file() or suffix not in (".epub", ".pdf"):
+                continue
+            if entry.name in (TEST_EPUB_NAME, TEST_PDF_NAME):
                 continue
             if entry.name in seen_names:
                 continue
@@ -703,7 +722,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             valid_name = (name and name == os.path.basename(name) and not name.startswith(".")
                           and os.sep not in name and (not os.altsep or os.altsep not in name)
-                          and name.lower().endswith(".epub") and name != TEST_EPUB_NAME)
+                          and Path(name).suffix.lower() in (".epub", ".pdf")
+                          and name not in (TEST_EPUB_NAME, TEST_PDF_NAME))
 
             target_path = None
             if valid_name:
@@ -715,14 +735,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         break
 
             if target_path:
-                self._send_file(str(target_path), "application/epub+zip", download_name=name)
+                content_type = "application/epub+zip" if target_path.suffix.lower() == ".epub" else "application/pdf"
+                self._send_file(str(target_path), content_type, download_name=name)
             else:
-                self._json({"error": "Khong tim thay file EPUB"}, 404)
+                self._json({"error": "Khong tim thay file EPUB/PDF"}, 404)
         elif path == "/download_test":
             if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
                 self._send_file(TEST_EPUB_PATH, "application/epub+zip", download_name=TEST_EPUB_NAME)
             else:
                 self._json({"error": "Chua co file EPUB dung thu"}, 404)
+        elif path == "/download_test_pdf":
+            if TEST_PDF_PATH and os.path.exists(TEST_PDF_PATH):
+                self._send_file(TEST_PDF_PATH, "application/pdf", download_name=TEST_PDF_NAME)
+            else:
+                self._json({"error": "Chua co file PDF dung thu"}, 404)
         elif path.startswith("/assets/"):
             asset = _web_file(urllib.parse.unquote(path[len("/assets/"):]))
             if asset is None:

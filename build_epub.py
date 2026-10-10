@@ -62,7 +62,7 @@ def generate_cover_image(title: str, author: str, output_path: str) -> None:
 
 def copy_to_downloads(src_path: str) -> str | None:
     """
-    Sao chep file epub sang thu muc Download cua thiet bi (Android, Windows, macOS, Linux).
+    Sao chep file dau ra sang thu muc Download cua thiet bi (Android, Windows, macOS, Linux).
     """
     import os
     import shutil

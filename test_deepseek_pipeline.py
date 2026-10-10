@@ -15,6 +15,7 @@ from deepseek_translate import (
     is_peak_hour, _peak_window_end, BEIJING_TZ,
 )
 from build_epub import parse_chapters as parse_chapters_epub, build_epub
+from build_pdf import build_pdf
 
 
 SAMPLE_ZH = """=== 第1章 开始 ===
@@ -74,6 +75,16 @@ def demo():
         result_path = build_epub(vi_path, epub_out, "Test Truyện", "Test Author")
         assert os.path.exists(result_path)
         assert os.path.getsize(result_path) > 0
+
+        pdf_out = os.path.join(d, "out.pdf")
+        pdf_result = build_pdf(vi_path, pdf_out, "Truyện kiểm thử", "Tác giả")
+        assert os.path.exists(pdf_result)
+        assert os.path.getsize(pdf_result) > 1000
+        with open(pdf_result, "rb") as pdf_file:
+            pdf_bytes = pdf_file.read()
+        assert pdf_bytes.startswith(b"%PDF-")
+        assert b"/FontFile" in pdf_bytes
+        assert b"/ToUnicode" in pdf_bytes
 
         # crawl_novel phai TU DONG resume tu chuong ke tiep dua tren so chuong da co
         # trong file, khong dua vao so chuong ghi trong start_url - tranh cao trung

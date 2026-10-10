@@ -1,6 +1,6 @@
-# DeepSeek Novel Translator & EPUB Packager
+# DeepSeek Novel Translator & EPUB/PDF Packager
 
-Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao qua DeepSeek API và tự động đóng gói thành file EPUB hoàn chỉnh. Dự án được thiết kế tối ưu cho thiết bị di động (chạy trên Android qua Termux) và máy tính cá nhân (PC).
+Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao qua DeepSeek API và tự động đóng gói thành file EPUB/PDF hoàn chỉnh. Dự án được thiết kế tối ưu cho thiết bị di động (chạy trên Android qua Termux) và máy tính cá nhân (PC).
 
 ---
 
@@ -19,7 +19,7 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
   * **Streaming API & Connection Pooling (MỚI)**: Cắt giảm hàng trăm TLS handshakes dư thừa thông qua `requests.Session` và giải quyết triệt để lỗi timeout bằng cơ chế SSE Streaming cho các chương dài khi bật AI thinking.
   * **Write-Ahead Cache (MỚI)**: Cơ chế sao lưu thông minh (fallback) bảo toàn dữ liệu JSON ngay khi vừa nhận từ API, chống mất tiền oan khi ứng dụng crash.
   * **Cơ chế Bảo vệ Thiết bị (MỚI)**: Tự động kiểm tra dung lượng ổ đĩa chống tràn bộ nhớ và tích hợp tính năng Wake-lock giữ màn hình trên Termux chống Android đóng ứng dụng đột ngột.
-* 📚 **Đóng gói EPUB chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản và xuất ra file `.epub` có mục lục hoàn chỉnh.
+* 📚 **Đóng gói EPUB/PDF chuyên nghiệp**: Tự động chuyển đổi định dạng, làm sạch văn bản và xuất ra file `.epub` có mục lục cùng file `.pdf` Unicode tiếng Việt.
 * ✅ **Kiểm tra chất lượng tự động (Validation)**: Module `validator.py` tự động chạy sau khi dịch xong để phát hiện: chương bị rỗng, số chương bị lệch so với bản gốc, và tồn dư ký tự tiếng Hán chưa được dịch.
 * 🔀 **Dịch nhiều truyện song song (Multi-Novel)**: `multi_pipeline.py` cho phép dịch nhiều bộ truyện cùng lúc từ một file cấu hình JSON. Các luồng chia sẻ tín hiệu dừng chung — nếu một truyện gặp lỗi hết token, **tất cả đều dừng ngay lập tức**.
 * ⏯️ **Tự động tiếp tục (Resume)**: Mỗi truyện ghi đĩa sau mỗi chương. Khi bị gián đoạn, chạy lại sẽ tự động bỏ qua các chương đã dịch thành công.
@@ -73,10 +73,10 @@ Sau đó truy cập: [http://localhost:8000](http://localhost:8000)
   tail -n 20 ~/novel/pipeline_*.log
   pkill -f python  # Tắt cưỡng bức
   ```
-* **Lấy file EPUB ra điện thoại:**
+* **Lấy file EPUB/PDF ra điện thoại:**
   ```bash
   termux-setup-storage  # Cấp quyền (nếu chưa)
-  cp ~/novel/*.epub /sdcard/Download/
+    cp ~/novel/*.{epub,pdf} /sdcard/Download/
   ```
 
 ### 6. Khắc phục lỗi Termux bị đóng đột ngột (Killed in background)
@@ -210,7 +210,7 @@ python multi_pipeline.py --config novels.json
 ### 4. Bản đóng gói Windows (.exe)
 
 Không cần cài Python: giải nén cả thư mục `NovelTranslator`, bấm đúp `NovelTranslator.exe`. Trình duyệt tự mở giao diện
-tại `http://127.0.0.1:8000` (đổi cổng nếu bận). Dữ liệu (`.env`, truyện thô, bản dịch, EPUB) nằm trong thư mục
+tại `http://127.0.0.1:8000` (đổi cổng nếu bận). Dữ liệu (`.env`, truyện thô, bản dịch, EPUB, PDF) nằm trong thư mục
 `DuLieu` cạnh file `.exe`; muốn đổi nơi lưu thì đặt biến môi trường `NOVEL_DATA_DIR`. Nút "Thoát ứng dụng" ở cuối
 trang (hoặc đóng cửa sổ đen) sẽ tắt ứng dụng và dừng luôn tiến trình dịch đang chạy.
 Khi chuyển giữa `python app.py` và bản `.exe`, hãy chép `DuLieu` cũ sang cạnh file EXE mới; hai chế độ
@@ -222,7 +222,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 ```
 Kết quả: `dist\NovelTranslator\` và `dist\NovelTranslator-<phiên bản>-win64.zip`. Script tạo venv sạch trong `build\venv`,
 chạy PyInstaller theo `packaging/novel_translator.spec`, rồi chạy `NovelTranslator.exe --selftest` (kiểm tra thư viện, từ điển,
-giao diện, nhận diện ngày lễ Trung Quốc, tạo EPUB) và chỉ tạo zip khi selftest PASS. Phiên bản lấy từ `version.py`.
+giao diện, nhận diện ngày lễ Trung Quốc, tạo EPUB/PDF) và chỉ tạo zip khi selftest PASS. Phiên bản lấy từ `version.py`.
 
 Giao diện web nằm trong `web/` (`index.html`, `app.css`, `app.js`, font Plus Jakarta Sans có sẵn nên chạy được khi
 không có mạng). Server mặc định chỉ nghe `127.0.0.1`; đặt `NOVEL_GUI_HOST=0.0.0.0` nếu thật sự cần mở cho máy khác
@@ -253,7 +253,7 @@ trong mạng (lưu ý `/get_key` trả về API key).
    * tên riêng trong glossary riêng của truyện (`<file dịch>_glossary.json`) có mặt trong chương (bắt buộc dùng nguyên văn);
    * thành ngữ trong chương: nhóm "đã có cách dịch" (đã duyệt, tuyển tay, hoặc đã dùng ở chương trước) để dùng lại, nhóm "mới" kèm gợi ý của bước chuẩn bị hoặc nghĩa tham khảo.
 5. **Học sau mỗi chương**: tên riêng mới vào `<file dịch>_glossary.json`; thành ngữ và cách dịch đã dùng thật trong bản dịch vào `<file dịch>_idioms.json` (cách dùng nhiều nhất thành cách dịch chính; mục đã duyệt không bao giờ bị đổi).
-6. **Kiểm tra** (sót chữ Hán, tên dịch sai, số đoạn) rồi **đóng gói EPUB**.
+6. **Kiểm tra** (sót chữ Hán, tên dịch sai, số đoạn) rồi **đóng gói EPUB/PDF**.
 
 Xem trước bước chuẩn bị mà không dịch: `python prepare_novel.py --raw <truyện thô> --output <file dịch>` (thêm `--no-api` để chỉ in danh sách ứng viên tên, không tốn phí). Muốn khóa cách dịch một thành ngữ: duyệt rồi chạy `python build_idiom_dictionary.py --output <file dịch> --apply-review <file kết quả>`.
 
@@ -361,12 +361,13 @@ script Python và `unittest`.
 | [launcher.py](launcher.py) | Điểm vào bản đóng gói .exe (mở GUI, `--selftest`, tiến trình con `--worker`) |
 | [packaging/](packaging/) | Script build Windows (PyInstaller), icon, hướng dẫn người dùng |
 | [app.py](app.py) | Entrypoint tương thích, khởi động Web GUI API-only |
-| [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB |
+| [pipeline.py](pipeline.py) | Pipeline đơn: Cào → Dịch → Validate → EPUB + PDF |
 | [multi_pipeline.py](multi_pipeline.py) | 🆕 Pipeline đa truyện song song với balance detection |
 | [crawler.py](crawler.py) | Module cào dữ liệu từ web |
 | [deepseek_translate.py](deepseek_translate.py) | Module dịch thuật (Glossary, Style Guide, Error Handling, Balance Detection) |
 | [validator.py](validator.py) | 🆕 Module kiểm tra chất lượng bản dịch (sanity check) |
 | [build_epub.py](build_epub.py) | Module đóng gói EPUB |
+| [build_pdf.py](build_pdf.py) | Module đóng gói PDF Unicode |
 | [prepare_novel.py](prepare_novel.py) | Bước chuẩn bị trước khi dịch: lập glossary tên riêng + cách dịch thành ngữ cho cả truyện |
 | [build_idiom_dictionary.py](build_idiom_dictionary.py) | Quét thành ngữ của truyện, dịch trước (tùy chọn), áp kết quả duyệt |
 | [text_postprocess.py](text_postprocess.py) | Module hậu xử lý, chuẩn hóa chính tả tiếng Việt |

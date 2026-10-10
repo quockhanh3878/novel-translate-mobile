@@ -74,6 +74,8 @@ class TestPathResolver(unittest.TestCase):
             self.assertEqual(res["translated_path"], cwd / "Dau Pha_raw.txt.viet.txt")
             self.assertEqual(res["epub_path"], cwd / "Đấu Phá.epub")
             self.assertEqual(res["output_dir"], cwd)
+            self.assertEqual(res["pdf_path"].parent, cwd)
+            self.assertEqual(res["pdf_path"].suffix, ".pdf")
 
             # 2. File .txt khong chon noi luu
             raw_input = cwd / "truyen_goc.txt"
@@ -98,6 +100,8 @@ class TestPathResolver(unittest.TestCase):
             self.assertEqual(res["translated_path"], custom_out.resolve() / "Dau Pha_raw.txt.viet.txt")
             self.assertEqual(res["epub_path"], custom_out.resolve() / "Đấu Phá.epub")
             self.assertEqual(res["output_dir"], custom_out.resolve())
+            self.assertEqual(res["pdf_path"].parent, custom_out.resolve())
+            self.assertEqual(res["pdf_path"].suffix, ".pdf")
 
             # 2. File .txt co chon noi luu -> raw giu nguyen, translated va epub luu o custom_out
             source_dir = cwd / "NguonNgoai"

@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # run_termux.sh - Widget "app": cham icon tren man hinh chinh, nhap URL (tu cao) HOAC
 # duong dan file da cao san + ten truyen, chay pipeline.py (cao neu can -> dich DeepSeek
-# API -> dong goi EPUB) ngam, bao ket qua qua thong bao. Can Termux + Termux:API +
+# API -> dong goi EPUB va PDF) ngam, bao ket qua qua thong bao. Can Termux + Termux:API +
 # Termux:Widget (F-Droid) cho trai nghiem 1-cham; khong co widget van chay tay duoc:
 # ./run_termux.sh "<start-url-hoac-duong-dan-file-tho>" "<Ten truyen>"
 set -e
@@ -35,7 +35,7 @@ fi
 termux-wake-unlock
 
 if [ $STATUS -eq 0 ]; then
-    termux-notification -t "Xong: $TITLE" -c "EPUB da san sang: ${TITLE}.epub"
+    termux-notification -t "Xong: $TITLE" -c "EPUB va PDF da san sang: ${TITLE}.epub / ${TITLE}.pdf"
 else
     termux-notification -t "Loi: $TITLE" -c "Xem $LOG_FILE"
 fi

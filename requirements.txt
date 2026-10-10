@@ -8,6 +8,7 @@ typing_extensions==4.16.0
 urllib3==2.7.0
 ebooklib
 pillow
+reportlab>=4.0,<5.0
 cloudscraper
 opencc-python-reimplemented
 holidays

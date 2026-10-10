@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # setup_termux.sh - Chay 1 LAN DUY NHAT sau khi cai Termux, lo het phan con lai: cai
-# python/git, tai code, hoi API key, cap quyen luu EPUB ra bo nho may, cau hinh mo GUI
+# python/git, tai code, hoi API key, cap quyen luu EPUB/PDF ra bo nho may, cau hinh mo GUI
 # web tu dong moi lan mo Termux. Sau buoc nay nguoi dung khong can dung dong lenh nao
 # nua - chi mo Termux la vao thang trang web dich truyen.
 set -e
@@ -32,7 +32,7 @@ else
     echo "Da co .env, bo qua."
 fi
 
-echo "== 4/5: Cap quyen luu EPUB ra bo nho may (se hien popup xin quyen) =="
+echo "== 4/5: Cap quyen luu EPUB/PDF ra bo nho may (se hien popup xin quyen) =="
 termux-setup-storage || true
 sleep 2
 mkdir -p "$HOME/storage/shared/Documents" "$HOME/storage/shared/Download" 2>/dev/null || true

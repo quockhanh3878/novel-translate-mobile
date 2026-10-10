@@ -18,7 +18,7 @@ Su dung:
     #   .venv/bin/python multi_pipeline.py --config novels.json --api-key sk-xxxx
 
 Moi truyen ho tro cac khoa JSON sau (tuong duong tham so pipeline.py):
-    raw, translated, title, author, epub, glossary,
+    raw, translated, title, author, epub, pdf, glossary,
     model, temperature, workers, style_detect, thinking, avoid_peak
 """
 
@@ -45,6 +45,7 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
+from build_pdf import build_pdf
 from crawler import crawl_novel
 from deepseek_translate import load_dotenv, translate_novel, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
 from validator import validate_translation
@@ -70,6 +71,7 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
     raw_file = cfg.get("raw", "")
     translated_file = cfg.get("translated") or f"{raw_file}.viet.txt"
     epub_path = cfg.get("epub") or f"{title}.epub"
+    pdf_path = cfg.get("pdf") or f"{title}.pdf"
     glossary = cfg.get("glossary")  # None = glossary rieng cua truyen canh file dich
     model = cfg.get("model", DEFAULT_MODEL)
     reasoning_effort = cfg.get("reasoning_effort", DEFAULT_REASONING_EFFORT)
@@ -115,8 +117,9 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
         def _on_chapter_multi(idx, total, translated):
             try:
                 build_epub(translated_file, epub_path, title, author)
+                build_pdf(translated_file, pdf_path, title, author)
             except Exception as e:
-                log(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+                log(f"  [Loi EPUB/PDF] Khong the dong goi chuong {idx}: {e}")
 
         failed = translate_novel(
             raw_file, translated_file, glossary, api_key,
@@ -146,12 +149,14 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
         if warnings:
             log("[CANH BAO] Phat hien van de. Ban co the kiem tra lai truoc khi doc.")
 
-        # Buoc 4: Dong goi EPUB
-        log("=== Buoc 4/4: Dong goi EPUB ===")
+        # Buoc 4: Dong goi EPUB + PDF
+        log("=== Buoc 4/4: Dong goi EPUB + PDF ===")
         if failed:
-            log(f"CANH BAO: {len(failed)} chuong dich that bai, EPUB se KHONG day du.")
+            log(f"CANH BAO: {len(failed)} chuong dich that bai, EPUB/PDF se KHONG day du.")
         build_epub(translated_file, epub_path, title, author)
+        build_pdf(translated_file, pdf_path, title, author)
         log(f"Hoan tat! EPUB: {epub_path}")
+        log(f"Hoan tat! PDF: {pdf_path}")
         result_slot["status"] = "done"
 
     except Exception as e:

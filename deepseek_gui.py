@@ -26,6 +26,7 @@ from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_nov
 from deepseek_translate import (load_dotenv, load_glossary, save_glossary, translate_novel,
                                 glossary_path_for)
 from build_epub import build_epub
+from build_pdf import build_pdf
 
 BG_COLOR = "#1e1e1e"
 CARD_COLOR = "#2d2d2d"
@@ -106,7 +107,7 @@ class AppGUI(tk.Tk):
         left = ttk.Frame(self.tab_config, padding=20)
         left.grid(row=0, column=0, sticky="nsew")
 
-        ttk.Label(left, text="Quy trình: Cào → Dịch (DeepSeek Cache & Thuần Việt) → EPUB", style="Header.TLabel").pack(
+        ttk.Label(left, text="Quy trình: Cào → Dịch (DeepSeek Cache & Thuần Việt) → EPUB + PDF", style="Header.TLabel").pack(
             anchor="w", pady=(0, 15))
 
         api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -130,7 +131,7 @@ class AppGUI(tk.Tk):
         self.ent_translated.pack(fill="x", pady=(0, 10))
         self.ent_translated.insert(0, DEFAULT_OUTPUT + ".viet.txt")
 
-        ttk.Label(left, text="Tên Truyện (EPUB Metadata):").pack(anchor="w", pady=2)
+        ttk.Label(left, text="Tên Truyện (EPUB/PDF Metadata):").pack(anchor="w", pady=2)
         self.ent_title = ttk.Entry(left, width=70)
         self.ent_title.pack(fill="x", pady=(0, 10))
         self.ent_title.insert(0, "Đệ Tam Trùng Nhân Cách")
@@ -140,7 +141,7 @@ class AppGUI(tk.Tk):
         self.ent_author.pack(fill="x", pady=(0, 10))
         self.ent_author.insert(0, "Thường Thư Hân")
 
-        ttk.Label(left, text="Thư mục lưu file EPUB:").pack(anchor="w", pady=2)
+        ttk.Label(left, text="Thư mục lưu file EPUB/PDF:").pack(anchor="w", pady=2)
         dir_frame = ttk.Frame(left)
         dir_frame.pack(fill="x", pady=(0, 15))
         self.ent_dir = ttk.Entry(dir_frame)
@@ -320,13 +321,16 @@ class AppGUI(tk.Tk):
             self.lbl_status.config(text="Bước 2/3: Đang dịch...")
             
             epub_path = os.path.join(save_dir, f"{title}.epub")
+            pdf_path = os.path.join(save_dir, f"{title}.pdf")
             def _on_chapter_gui(idx, total, translated):
                 self.on_chapter_progress(idx, total, translated)
                 try:
                     from build_epub import build_epub
+                    from build_pdf import build_pdf
                     build_epub(translated_file, epub_path, title, author)
+                    build_pdf(translated_file, pdf_path, title, author)
                 except Exception as e:
-                    self.log(f"  [Lỗi EPUB] Không thể đóng gói EPUB chương {idx}: {e}")
+                    self.log(f"  [Lỗi EPUB/PDF] Không thể đóng gói chương {idx}: {e}")
 
             translate_novel(
                 raw_file, translated_file, glossary_path_for(translated_file), api_key,
@@ -339,14 +343,17 @@ class AppGUI(tk.Tk):
                 self.log("[Đã dừng] Chạy lại để tiếp tục từ đây.")
                 return
 
-            self.log("\n=== Bước 3/3: Đóng gói EPUB ===")
-            self.lbl_status.config(text="Bước 3/3: Đang đóng gói EPUB...")
+            self.log("\n=== Bước 3/3: Đóng gói EPUB + PDF ===")
+            self.lbl_status.config(text="Bước 3/3: Đang đóng gói EPUB + PDF...")
             epub_path = os.path.join(save_dir, f"{title}.epub")
+            pdf_path = os.path.join(save_dir, f"{title}.pdf")
             build_epub(translated_file, epub_path, title, author)
+            build_pdf(translated_file, pdf_path, title, author)
 
             self.log(f"\n[THÀNH CÔNG] Đã lưu EPUB tại: {epub_path}")
+            self.log(f"[THÀNH CÔNG] Đã lưu PDF tại: {pdf_path}")
             self.lbl_status.config(text="Đã hoàn thành!")
-            messagebox.showinfo("Thành công", f"Đã dịch và đóng gói xong EPUB tại:\n{epub_path}")
+            messagebox.showinfo("Thành công", f"Đã dịch và đóng gói xong EPUB/PDF tại:\n{epub_path}\n{pdf_path}")
 
         except Exception as ex:
             self.log(f"\n[LỖI] {ex}")

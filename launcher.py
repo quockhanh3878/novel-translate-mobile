@@ -127,7 +127,7 @@ def _selftest() -> int:
             print(f"FAIL  {name} - {type(e).__name__}: {e}")
 
     def modules():
-        import build_epub, cost_estimate, crawler, deepseek_translate, pipeline, prepare_novel, sources, validator, web_gui  # noqa: F401,E401
+        import build_epub, build_pdf, cost_estimate, crawler, deepseek_translate, pipeline, prepare_novel, sources, validator, web_gui  # noqa: F401,E401
         return "import du modules"
 
     def dictionaries():
@@ -172,6 +172,18 @@ def _selftest() -> int:
             assert os.path.getsize(out) > 1000
         return "tao EPUB co anh bia OK"
 
+    def pdf_build():
+        import tempfile
+        from build_pdf import build_pdf
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "t.txt")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write("=== Chương 1 ===\n\nXin chào tiếng Việt.\n\n" + "=" * 40 + "\n")
+            out = os.path.join(tmp, "t.pdf")
+            build_pdf(src, out, "Truyện thử", "Tác giả")
+            assert os.path.getsize(out) > 1000
+        return "tao PDF Unicode co dau OK"
+
     def data_writable():
         probe = Path(os.getcwd()) / ".selftest_probe"
         probe.write_text("ok", encoding="utf-8")
@@ -184,6 +196,7 @@ def _selftest() -> int:
     check("opencc", opencc_convert)
     check("ngay le Trung Quoc (holidays)", holidays_cn)
     check("dong goi EPUB", epub_build)
+    check("dong goi PDF", pdf_build)
     check("thu muc du lieu ghi duoc", data_writable)
     print("SELFTEST " + ("FAIL: " + ", ".join(failures) if failures else "PASS"))
     return 1 if failures else 0

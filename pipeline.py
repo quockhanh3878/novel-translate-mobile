@@ -1,6 +1,6 @@
 """
 pipeline.py - Chay ca quy trinh bang 1 lenh: Cao truyen -> Dich (DeepSeek API,
-prompt toi uu + glossary) -> Dong goi EPUB tieng Viet.
+prompt toi uu + glossary) -> Dong goi EPUB va PDF tieng Viet.
 
 Gop crawler.py + deepseek_translate.py + build_epub.py bang cach goi thang ham
 cua tung file (khong subprocess, khong trung logic).
@@ -45,6 +45,7 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub
+from build_pdf import build_pdf
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream, iter_chapters_from_file
 from sources import find_adapter
 from deepseek_translate import (load_dotenv, translate_novel, translate_novel_stream, detect_style_guide,
@@ -68,15 +69,16 @@ def _check_disk_space(path: str, warn_mb: int = 100, min_mb: int = 20) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Validate -> Dong goi EPUB")
+    parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Validate -> Dong goi EPUB + PDF")
     parser.add_argument("--start-url", default=None,
                          help="URL chuong 1 de cao (bo qua neu da co san --raw)")
     parser.add_argument("--raw", default=DEFAULT_OUTPUT, help="File luu noi dung tho da cao")
     parser.add_argument("--translated", default=None,
                          help="File luu ban dich, mac dinh <raw>.viet.txt")
-    parser.add_argument("--title", required=True, help="Ten truyen (EPUB metadata + ten file EPUB)")
+    parser.add_argument("--title", required=True, help="Ten truyen (metadata + ten file EPUB/PDF)")
     parser.add_argument("--author", default="Unknown")
     parser.add_argument("--epub", default=None, help="Duong dan EPUB dau ra, mac dinh <title>.epub")
+    parser.add_argument("--pdf", default=None, help="Duong dan PDF dau ra, mac dinh <title>.pdf")
     parser.add_argument("--glossary", default=None,
                          help="Mac dinh: glossary rieng cua truyen canh file dich (<file dich>_glossary.json)")
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -116,25 +118,27 @@ def main():
 
     translated_file = args.translated or f"{args.raw}.viet.txt"
     epub_path = args.epub or f"{args.title}.epub"
+    pdf_path = args.pdf or f"{args.title}.pdf"
 
     # Tao thu muc cha neu chua co
-    for fpath in (args.raw, translated_file, epub_path):
+    for fpath in (args.raw, translated_file, epub_path, pdf_path):
         parent_dir = os.path.dirname(os.path.abspath(fpath))
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
 
-    # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB ngay luon
+    # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB/PDF ngay luon
     # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi.
     if os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
         from crawler import count_chapters as _count_vi
         existing_count = _count_vi(translated_file)
         if existing_count > 0:
-            print(f"[EPUB] Phat hien {existing_count} chuong da dich co san, dang dong goi EPUB nguon...")
+            print(f"[EPUB/PDF] Phat hien {existing_count} chuong da dich co san, dang dong goi nguon...")
             try:
                 build_epub(translated_file, epub_path, args.title, args.author)
-                print(f"[EPUB] Da dong goi {existing_count} chuong vao: {epub_path}")
+                build_pdf(translated_file, pdf_path, args.title, args.author)
+                print(f"[EPUB/PDF] Da dong goi {existing_count} chuong vao: {epub_path} va {pdf_path}")
             except Exception as e:
-                print(f"[EPUB] Loi khi dong goi ban cu: {e}")
+                print(f"[EPUB/PDF] Loi khi dong goi ban cu: {e}")
 
     # Kiem tra dung luong disk truoc khi bat dau
     _check_disk_space(args.raw)
@@ -227,8 +231,9 @@ def main():
         def _on_chapter_stream(idx, title, translated):
             try:
                 build_epub(translated_file, epub_path, args.title, args.author)
+                build_pdf(translated_file, pdf_path, args.title, args.author)
             except Exception as e:
-                print(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+                print(f"  [Loi EPUB/PDF] Khong the dong goi chuong {idx}: {e}")
 
         failed = translate_novel_stream(
             chapter_gen, translated_file, args.glossary, api_key,
@@ -256,8 +261,9 @@ def main():
         def _on_chapter_batch(idx, total, translated):
             try:
                 build_epub(translated_file, epub_path, args.title, args.author)
+                build_pdf(translated_file, pdf_path, args.title, args.author)
             except Exception as e:
-                print(f"  [Loi EPUB] Khong the dong goi EPUB chuong {idx}: {e}")
+                print(f"  [Loi EPUB/PDF] Khong the dong goi chuong {idx}: {e}")
                 
         failed = translate_novel(args.raw, translated_file, args.glossary, api_key, model=args.model,
                          temperature=args.temperature, workers=args.workers, thinking=not args.no_thinking,
@@ -270,13 +276,15 @@ def main():
     if warnings:
         print("\n[CANH BAO] Phat hien van de trong ban dich. Ban co the can kiem tra lai.")
 
-    print("\n=== Buoc 4/4: Dong goi EPUB ===")
+    print("\n=== Buoc 4/4: Dong goi EPUB + PDF ===")
     if failed:
-        print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB se KHONG day du.")
+        print(f"CANH BAO: Co {len(failed)} chuong dich that bai. EPUB/PDF se KHONG day du.")
         for fc in failed:
             print(f"  - Chuong {fc['index']}: {fc['title']}")
     build_epub(translated_file, epub_path, args.title, args.author)
+    build_pdf(translated_file, pdf_path, args.title, args.author)
     print(f"\nHoan tat! EPUB: {epub_path}")
+    print(f"Hoan tat! PDF: {pdf_path}")
 
 
 if __name__ == "__main__":
