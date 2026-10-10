@@ -113,6 +113,7 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     book.add_author(author)
 
     out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
+    os.makedirs(out_dir, exist_ok=True)
     cover_path = os.path.join(out_dir, "_cover_tmp.jpg")
     generate_cover_image(title, author, cover_path)
     with open(cover_path, "rb") as f:

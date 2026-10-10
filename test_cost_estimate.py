@@ -96,6 +96,20 @@ def test_endpoint(work):
         assert data["chapters"] == 1 and data["crawled_chapters"] == 1 and data["total_chars"] == 3, data
         assert any("Chưa có bảng giá" in warning for warning in data["warnings"])
 
+        # Test estimate co output_dir va phat hien file dich trong output_dir
+        out_dir = Path(work) / "CustomEstimateDir"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        custom_trans = out_dir / (raw.name + ".viet.txt")
+        custom_trans.write_text("=== T ===\n\n=== C1 ===\nban dich\n\n========================================\n", encoding="utf-8")
+
+        query_out = urllib.parse.urlencode({
+            "input": str(raw),
+            "output_dir": str(out_dir),
+        })
+        status, data = get_json(base, "/estimate?" + query_out)
+        assert status == 200 and data["available"] is True, data
+        assert data["translated_chapters"] == 1, data
+
         for bad_input in ("../web_gui.py", ".", "missing.txt"):
             status, data = get_json(base, "/estimate?" + urllib.parse.urlencode({"input": bad_input}))
             assert status in (200, 400) and data["available"] is False, (bad_input, status, data)

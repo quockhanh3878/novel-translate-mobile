@@ -390,6 +390,24 @@ button:disabled { cursor: not-allowed; }
 .file-status.ok { color: var(--accent-green); }
 .file-status.bad { color: var(--accent-red); }
 
+.dir-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin: 6px 0 6px 0;
+}
+
+.dir-row input {
+    margin: 0;
+    flex: 1;
+    min-width: 0;
+}
+
+.dir-row button {
+    flex-shrink: 0;
+    height: 44px;
+}
+
 .cost-estimate {
     margin: -2px 0 18px;
     padding: 14px 16px;

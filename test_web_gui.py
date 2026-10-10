@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT)
@@ -157,6 +158,32 @@ def demo():
         for bad in ("../web_gui.py", "..%5Cweb_gui.py", "bi_mat.txt", "test_dung_thu.epub", ".env", ""):
             assert get(base, "/download?name=" + bad)[0] == 404, bad
 
+        # Test safe upload qua /upload_raw
+        upload_data = "Noi dung upload an toan".encode("utf-8")
+        req_up = urllib.request.Request(base + "/upload_raw?name=truyen_test.txt", method="POST", data=upload_data)
+        with urllib.request.urlopen(req_up, timeout=5) as resp:
+            assert resp.status == 200
+            up_res = json.loads(resp.read().decode())
+            assert up_res["success"] is True and os.path.isfile(up_res["path"])
+            with open(up_res["path"], "rb") as uf:
+                assert uf.read() == upload_data
+
+        # Test library va download voi output_dir tuy chon
+        custom_out_dir = os.path.join(_work.name, "CustomOutput")
+        os.makedirs(custom_out_dir, exist_ok=True)
+        custom_epub = os.path.join(custom_out_dir, "CustomTruyen.epub")
+        with open(custom_epub, "wb") as f:
+            f.write(b"PK-custom-epub")
+
+        # Goi /library co tham so output_dir
+        status, _, body = get(base, "/library?output_dir=" + urllib.parse.quote(custom_out_dir))
+        names = [item["name"] for item in json.loads(body)["items"]]
+        assert "CustomTruyen.epub" in names, names
+
+        # Tai file tu custom output_dir
+        status, headers, body = get(base, "/download?name=" + urllib.parse.quote("CustomTruyen.epub") + "&output_dir=" + urllib.parse.quote(custom_out_dir))
+        assert status == 200 and body == b"PK-custom-epub"
+
         # /shutdown va /open_data_dir chi co khi launcher gan SHUTDOWN_HOOK / tren Windows
         req = urllib.request.Request(base + "/shutdown", method="POST", data=b"")
         try:
@@ -176,6 +203,13 @@ def demo():
         web_gui.run_pipeline("truyen_tho.txt", "Truyen Gia")
         assert web_gui.STATE["running"] is False and web_gui.STATE["step"] == "done", web_gui.STATE
         assert web_gui.STATE["epub"] == "Truyen Gia.epub" and web_gui.STATE["error"] is None
+
+        # Test run_pipeline voi output_dir tuy chon
+        job_out_dir = os.path.join(_work.name, "JobOutput")
+        web_gui.run_pipeline("truyen_tho.txt", "Truyen Job", output_dir=job_out_dir)
+        assert web_gui.STATE["running"] is False and web_gui.STATE["step"] == "done"
+        assert web_gui.STATE["output_dir"] == str(Path(job_out_dir).resolve())
+        assert web_gui.STATE["epub"] == str(Path(job_out_dir).resolve() / "Truyen Job.epub")
 
         fake_bad = "import sys; print('boom'); sys.exit(3)"
         web_gui._worker_command = lambda: [sys.executable, "-u", "-c", fake_bad]

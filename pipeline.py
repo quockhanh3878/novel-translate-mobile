@@ -117,6 +117,12 @@ def main():
     translated_file = args.translated or f"{args.raw}.viet.txt"
     epub_path = args.epub or f"{args.title}.epub"
 
+    # Tao thu muc cha neu chua co
+    for fpath in (args.raw, translated_file, epub_path):
+        parent_dir = os.path.dirname(os.path.abspath(fpath))
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
     # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB ngay luon
     # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi.
     if os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
@@ -132,6 +138,10 @@ def main():
 
     # Kiem tra dung luong disk truoc khi bat dau
     _check_disk_space(args.raw)
+    raw_dir = os.path.dirname(os.path.abspath(args.raw))
+    trans_dir = os.path.dirname(os.path.abspath(translated_file))
+    if raw_dir != trans_dir:
+        _check_disk_space(translated_file)
 
     print("=== Buoc 1/4: Cao truyen ===")
     failed = []

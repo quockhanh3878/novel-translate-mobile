@@ -72,6 +72,13 @@
             <label for="title_input">Tên truyện <span class="label-hint">(để trống sẽ tự đoán từ URL)</span></label>
             <input name="title" id="title_input" placeholder="Ví dụ: Đệ Tam Trùng Nhân Cách">
 
+            <label for="output_dir_input">Nơi lưu kết quả <span class="label-hint">(để trống: dùng thư mục dữ liệu mặc định)</span></label>
+            <div class="dir-row">
+                <input name="output_dir" id="output_dir_input" placeholder="Ví dụ: D:\Truyen_Dich (để trống: dùng mặc định)" spellcheck="false">
+                <button type="button" class="btn-small" id="btn-pick-dir" hidden>Chọn thư mục</button>
+            </div>
+            <p class="hint" style="margin-top:-10px;margin-bottom:14px">Bản dịch .viet.txt và EPUB sẽ lưu tại đây. Nếu nhập link URL, cả file thô cũng lưu vào đây.</p>
+
             <details>
                 <summary>Cấu hình nâng cao</summary>
                 <div class="details-body">

@@ -331,6 +331,7 @@
         const params = new URLSearchParams({
             input: input,
             title: form.elements.title.value,
+            output_dir: form.elements.output_dir ? form.elements.output_dir.value.trim() : '',
             model: form.elements.model.value,
             reasoning_effort: form.elements.reasoning_effort.value,
             no_thinking: form.elements.no_thinking.checked ? '1' : '0',
@@ -351,13 +352,14 @@
     }
 
     inputSource.addEventListener('input', scheduleEstimate);
-    ['title', 'model', 'reasoning_effort', 'no_thinking', 'allow_peak'].forEach((name) => {
+    ['title', 'output_dir', 'model', 'reasoning_effort', 'no_thinking', 'allow_peak'].forEach((name) => {
         const field = form.elements[name];
+        if (!field) return;
         field.addEventListener('change', scheduleEstimate);
         if (field.tagName === 'INPUT' && field.type !== 'checkbox') field.addEventListener('input', scheduleEstimate);
     });
 
-    const TEXT_FIELDS = ['input', 'title', 'author', 'model', 'reasoning_effort', 'workers', 'temperature', 'chapters'];
+    const TEXT_FIELDS = ['input', 'title', 'output_dir', 'author', 'model', 'reasoning_effort', 'workers', 'temperature', 'chapters'];
     const CHECK_FIELDS = ['stream_mode', 'allow_peak', 'no_style_detect', 'no_thinking'];
 
     function saveForm() {
@@ -584,7 +586,7 @@
             costSpent.hidden = !(Number(s.cost_spent) > 0);
             if (!costSpent.hidden) costSpent.textContent = 'Đã tiêu khoảng ' + formatUsd(s.cost_spent);
             fileInfo.textContent = s.raw_file
-                ? 'File thô: ' + s.raw_file + '  |  File dịch: ' + s.translated_file
+                ? 'File thô: ' + s.raw_file + '  |  File dịch: ' + s.translated_file + (s.epub_path ? '  |  EPUB: ' + s.epub_path : '')
                 : '';
             renderResult(s);
 
@@ -649,7 +651,8 @@
 
     async function loadLibrary() {
         try {
-            const r = await fetch('/library');
+            const outDir = form && form.elements.output_dir ? form.elements.output_dir.value.trim() : '';
+            const r = await fetch('/library' + (outDir ? '?output_dir=' + encodeURIComponent(outDir) : ''));
             const data = await r.json();
             renderLibrary(data.items || []);
         } catch (err) {
@@ -667,6 +670,7 @@
 
     const btnQuit = $('btn-quit');
     const btnOpenDir = $('btn-open-dir');
+    const btnPickDir = $('btn-pick-dir');
     let quitArmed = false;
     let quitTimer = null;
 
@@ -686,6 +690,28 @@
 
             btnOpenDir.hidden = !info.can_open_dir;
             btnQuit.hidden = !info.can_quit;
+
+            if (btnPickDir) {
+                btnPickDir.hidden = !info.can_pick_dir;
+                btnPickDir.onclick = async () => {
+                    btnPickDir.disabled = true;
+                    try {
+                        const r = await fetch('/pick_directory', { method: 'POST' });
+                        const res = await r.json();
+                        if (res.success && res.path) {
+                            const outputInput = $('output_dir_input');
+                            if (outputInput) outputInput.value = res.path;
+                            saveForm();
+                            scheduleEstimate();
+                            loadLibrary();
+                        }
+                    } catch (err) {
+                        notify('Không chọn được thư mục: ' + err.message, 'error');
+                    } finally {
+                        btnPickDir.disabled = false;
+                    }
+                };
+            }
         } catch (err) {
             console.error('Info error:', err);
         }

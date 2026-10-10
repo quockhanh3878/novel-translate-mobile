@@ -30,6 +30,10 @@ from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 is_peak_hour)
 from text_postprocess import postprocess
 from version import __version__
+from path_resolver import (sanitize_filename, validate_output_dir,
+                           resolve_pipeline_paths, is_safe_path, safe_upload_file)
+
+REGISTERED_OUTPUT_DIRS: set[Path] = set()
 
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 
@@ -265,19 +269,8 @@ def resolve_raw_file(input_val: str, title: str = "") -> str:
     second crawl. The title-derived path remains a compatibility fallback for
     files created by older GUI versions.
     """
-    input_val = (input_val or "").strip()
-    if not input_val.lower().startswith(("http://", "https://")):
-        return input_val
-
-    url_name = f"{sanitize_filename(guess_title(input_val))}_raw.txt"
-    if os.path.isfile(url_name):
-        return url_name
-
-    legacy_name = f"{sanitize_filename(title)}_raw.txt" if title.strip() else ""
-    if legacy_name and legacy_name != url_name and os.path.isfile(legacy_name):
-        return legacy_name
-
-    return url_name
+    paths = resolve_pipeline_paths(input_val, title=title)
+    return str(paths["raw_path"].name if paths["is_url"] else paths["raw_path"])
 
 
 STEP_MARKER_RE = re.compile(r"=== Buoc (\d)/4:")
@@ -301,7 +294,7 @@ def _worker_env():
     return env
 
 
-def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT):
+def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir=""):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
@@ -324,15 +317,17 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
         if chapters > 0:
             args += ["--chapters", str(chapters)]
 
-    if input_val.lower().startswith(("http://", "https://")):
-        # Ten file chuan lay tu URL; title chi la metadata hien thi. Neu co file
-        # cu theo cach dat ten cua ban GUI truoc day, resolve_raw_file se giu lai.
-        raw_file = resolve_raw_file(input_val, title)
+    paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
+    raw_file = str(paths["raw_path"])
+    translated_file = str(paths["translated_path"])
+    epub_file = str(paths["epub_path"])
+    out_dir_str = str(paths["output_dir"])
+
+    if paths["is_url"]:
         args += ["--start-url", input_val, "--raw", raw_file]
     else:
-        raw_file = input_val
         args += ["--raw", raw_file]
-    translated_file = f"{raw_file}.viet.txt"
+    args += ["--translated", translated_file, "--epub", epub_file]
 
     global CURRENT_PROC
     with LOCK:
@@ -349,6 +344,8 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             stream_mode=stream_mode,
             raw_file=raw_file,
             translated_file=translated_file,
+            output_dir=out_dir_str,
+            epub_path=epub_file,
             cost_spent=0.0,
             cost_model=model,
             allow_peak=allow_peak,
@@ -450,7 +447,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                 return
                 
             STATE["step"] = "done"
-            epub_path = f"{title}.epub"
+            epub_path = epub_file if paths["has_custom_output"] else paths["epub_path"].name
             if os.path.isdir(SHARED_DOCUMENTS):
                 try:
                     shutil.copy(epub_path, SHARED_DOCUMENTS)
@@ -459,6 +456,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                     STATE["epub"] = f"{epub_path} (Loi copy: {str(e)})"
             else:
                 STATE["epub"] = epub_path
+            REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
                 
     except Exception as e:
         with LOCK:
@@ -476,21 +474,56 @@ def _platform() -> str:
     return "windows" if os.name == "nt" else "other"
 
 
-def _library_items() -> list:
-    """Cac file EPUB da dong goi trong thu muc lam viec (moi nhat truoc), tru file dich thu."""
-    items = []
+def _pick_directory_dialog() -> str:
+    """Mo hop thoai FolderBrowserDialog tren Windows de nguoi dung chon thu muc."""
+    if os.name != "nt":
+        return ""
     try:
-        entries = list(os.scandir("."))
-    except OSError:
-        return items
-    for entry in entries:
-        if not entry.is_file() or not entry.name.lower().endswith(".epub") or entry.name == TEST_EPUB_NAME:
-            continue
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title="Chọn thư mục lưu kết quả dịch")
+        root.destroy()
+        return path or ""
+    except Exception:
+        return ""
+
+
+def _library_items(extra_dir=None) -> list:
+    """Cac file EPUB da dong goi trong thu muc lam viec va cac thu muc dau ra (moi nhat truoc), tru file dich thu."""
+    items = []
+    seen_names = set()
+    dirs_to_scan = [Path.cwd().resolve()]
+    for d in REGISTERED_OUTPUT_DIRS:
+        res_d = Path(d).resolve()
+        if res_d not in dirs_to_scan:
+            dirs_to_scan.append(res_d)
+    if extra_dir:
         try:
-            st = entry.stat()
+            p = Path(extra_dir).expanduser().resolve()
+            if p.is_dir() and p not in dirs_to_scan:
+                dirs_to_scan.append(p)
+        except Exception:
+            pass
+
+    for directory in dirs_to_scan:
+        try:
+            entries = list(os.scandir(str(directory)))
         except OSError:
             continue
-        items.append({"name": entry.name, "size": st.st_size, "mtime": int(st.st_mtime)})
+        for entry in entries:
+            if not entry.is_file() or not entry.name.lower().endswith(".epub") or entry.name == TEST_EPUB_NAME:
+                continue
+            if entry.name in seen_names:
+                continue
+            seen_names.add(entry.name)
+            try:
+                st = entry.stat()
+            except OSError:
+                continue
+            items.append({"name": entry.name, "size": st.st_size, "mtime": int(st.st_mtime)})
     items.sort(key=lambda item: item["mtime"], reverse=True)
     return items
 
@@ -554,6 +587,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _estimate(self, query):
         input_value = query.get("input", [""])[0].strip()
         title = query.get("title", [""])[0].strip()
+        output_dir = query.get("output_dir", [""])[0].strip()
         model = query.get("model", [DEFAULT_MODEL])[0].strip() or DEFAULT_MODEL
         effort = query.get("reasoning_effort", [DEFAULT_REASONING_EFFORT])[0].strip()
         if effort not in REASONING_EFFORTS:
@@ -564,9 +598,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not input_value:
             return {"available": False, "reason": "Chưa có file thô hoặc link."}
 
-        if input_value.lower().startswith(("http://", "https://")):
-            raw_name = resolve_raw_file(input_value, title)
-            raw_path = Path.cwd() / raw_name
+        try:
+            paths = resolve_pipeline_paths(input_value, title=title, output_dir=output_dir)
+        except Exception as exc:
+            return {"available": False, "reason": f"Đường dẫn file không hợp lệ: {exc}"}
+
+        if paths["is_url"]:
+            raw_path = paths["raw_path"]
             if not raw_path.is_file():
                 adapter = find_adapter(input_value)
                 if adapter and adapter.is_catalog_url(input_value):
@@ -576,18 +614,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return {"available": False,
                         "reason": "Link này chưa được cào nên chưa biết số chương; cào xong mới ước tính được."}
         else:
-            raw_path = Path(input_value).expanduser()
+            raw_path = paths["raw_path"]
             if raw_path.suffix.lower() != ".txt":
                 return {"available": False, "reason": "Chỉ đọc file .txt."}
-            try:
-                raw_path = raw_path.resolve()
-                raw_path.relative_to(Path.cwd().resolve())
-            except (OSError, ValueError):
-                return {"available": False, "reason": "Đường dẫn file không hợp lệ."}
             if not raw_path.is_file():
                 return {"available": False, "reason": "Không tìm thấy file thô."}
 
-        translated_path = Path(str(raw_path) + ".viet.txt")
+        translated_path = paths["translated_path"]
         peak = bool(allow_peak and is_peak_hour())
         return estimate_file(raw_path, translated_path if translated_path.is_file() else None,
                              model=model, reasoning_effort=effort,
@@ -617,16 +650,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "data_dir": os.getcwd(),
                 "can_quit": SHUTDOWN_HOOK is not None,
                 "can_open_dir": _platform() == "windows",
+                "can_pick_dir": _platform() == "windows",
             })
         elif path == "/library":
-            self._json({"items": _library_items()})
+            output_dir_param = urllib.parse.parse_qs(parsed.query).get("output_dir", [""])[0].strip()
+            self._json({"items": _library_items(extra_dir=output_dir_param if output_dir_param else None)})
         elif path == "/download":
             name = urllib.parse.parse_qs(parsed.query).get("name", [""])[0]
-            valid = (name and name == os.path.basename(name) and not name.startswith(".")
-                     and os.sep not in name and (not os.altsep or os.altsep not in name)
-                     and name.lower().endswith(".epub") and name != TEST_EPUB_NAME and os.path.isfile(name))
-            if valid:
-                self._send_file(name, "application/epub+zip", download_name=name)
+            output_dir_param = urllib.parse.parse_qs(parsed.query).get("output_dir", [""])[0].strip()
+            if output_dir_param:
+                ok, valid_out, _ = validate_output_dir(output_dir_param, create=False)
+                if ok and valid_out:
+                    REGISTERED_OUTPUT_DIRS.add(valid_out)
+
+            valid_name = (name and name == os.path.basename(name) and not name.startswith(".")
+                          and os.sep not in name and (not os.altsep or os.altsep not in name)
+                          and name.lower().endswith(".epub") and name != TEST_EPUB_NAME)
+            
+            target_path = None
+            if valid_name:
+                allowed_roots = [Path.cwd().resolve(), *[Path(d).resolve() for d in REGISTERED_OUTPUT_DIRS]]
+                for root_dir in allowed_roots:
+                    candidate = root_dir / name
+                    if candidate.is_file() and is_safe_path(candidate, allowed_roots):
+                        target_path = candidate
+                        break
+
+            if target_path:
+                self._send_file(str(target_path), "application/epub+zip", download_name=name)
             else:
                 self._json({"error": "Khong tim thay file EPUB"}, 404)
         elif path == "/download_test":
@@ -657,11 +708,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             filename = sanitize_filename(os.path.basename(qs.get("name", [""])[0]) or "cao_tay.txt")
             length = int(self.headers.get("Content-Length", 0))
             data = self.rfile.read(length)
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
-            save_path = os.path.join(UPLOAD_DIR, filename)
-            with open(save_path, "wb") as out:
-                out.write(data)
-            self._json({"success": True, "path": save_path})
+            ok, save_path, err = safe_upload_file(UPLOAD_DIR, filename, data)
+            if ok and save_path:
+                self._json({"success": True, "path": str(save_path)})
+            else:
+                self._json({"success": False, "message": err or "Khong the luu file"}, 500)
+            return
+
+        if self.path == "/pick_directory":
+            if _platform() != "windows":
+                self._json({"success": False, "message": "Chi ho tro tren Windows"}, 400)
+                return
+            selected = _pick_directory_dialog()
+            self._json({"success": bool(selected), "path": selected or ""})
             return
 
         if self.path == "/stop":
@@ -753,13 +812,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             chapters = 0
 
+        output_dir = params.get("output_dir", [""])[0].strip()
+        if output_dir:
+            ok, resolved_dir, err = validate_output_dir(output_dir, create=True)
+            if not ok or resolved_dir is None:
+                with LOCK:
+                    STATE["error"] = f"Thu muc luu khong hop le: {err}"
+                    STATE["step"] = "idle"
+                self._send(400)
+                return
+            REGISTERED_OUTPUT_DIRS.add(resolved_dir)
+
         with LOCK:
             already_running = STATE["running"]
 
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort, output_dir),
                 daemon=True
             ).start()
 
