@@ -31,11 +31,13 @@ Bộ công cụ cào truyện Trung Quốc, dịch thuật chất lượng cao q
 ## 📱 Hướng dẫn trên Android Termux
 
 ### 1. Cài đặt mới
+Trước hết, cài **Termux** và **Termux:API** từ cùng một nguồn (F-Droid hoặc GitHub). Hai app phải cùng nguồn cài đặt thì các lệnh wake-lock, hộp thoại và thông báo mới hoạt động. Termux:Widget là tùy chọn nếu cần nút một-chạm.
+
 Mở ứng dụng Termux trên Android và chạy duy nhất dòng lệnh dưới đây:
 ```bash
 curl -sOL https://raw.githubusercontent.com/quockhanh3878/novel-translate-mobile/main/setup_termux.sh && bash setup_termux.sh
 ```
-*Lưu ý:* Quá trình cài đặt sẽ yêu cầu bạn dán API Key DeepSeek và cấp quyền truy cập bộ nhớ (`termux-setup-storage`).
+*Lưu ý:* Quá trình cài đặt sẽ yêu cầu bạn dán API Key DeepSeek và cấp quyền truy cập bộ nhớ (`termux-setup-storage`). Nếu từ chối quyền, script sẽ dừng để tránh báo EPUB/PDF đã copy khi file vẫn nằm trong vùng riêng của Termux.
 
 ### 2. Cập nhật phiên bản mới (Update)
 ```bash
@@ -70,7 +72,7 @@ Sau đó truy cập: [http://localhost:8000](http://localhost:8000)
 * **Kiểm tra tiến trình chạy ẩn:**
   ```bash
   ps -ef | grep python
-  tail -n 20 ~/novel/pipeline_*.log
+  tail -n 20 ~/novel/pipeline.log
   pkill -f python  # Tắt cưỡng bức
   ```
 * **Lấy file EPUB/PDF ra điện thoại:**

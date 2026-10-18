@@ -71,9 +71,14 @@ def copy_to_downloads(src_path: str) -> str | None:
         return None
 
     filename = os.path.basename(src_path)
-    
+
     # Kiem tra thu muc Download tren Android (Termux)
     android_download = os.path.expanduser("~/storage/shared/Download")
+    is_termux = os.path.exists("/data/data/com.termux")
+    shared_root = os.path.expanduser("~/storage/shared")
+    if is_termux and (not os.path.islink(shared_root) or not os.path.isdir(shared_root)):
+        print("Khong copy EPUB ra bo nho chung: Termux chua duoc cap quyen storage.")
+        return None
     if os.path.isdir(android_download):
         dest_dir = android_download
     elif os.path.isdir("/sdcard/Download"):

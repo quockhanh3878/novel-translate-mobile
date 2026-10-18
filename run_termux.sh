@@ -25,17 +25,24 @@ case "$INPUT" in
     *)     PIPE_ARGS=(--raw "$INPUT") ;;
 esac
 
-termux-wake-lock
+WAKE_LOCKED=0
+if termux-wake-lock; then
+    WAKE_LOCKED=1
+else
+    echo "Canh bao: khong bat duoc wake-lock. Pipeline van chay, nhung Android co the dung Termux khi o nen." >&2
+fi
 LOG_FILE="pipeline.log"
 if python pipeline.py "${PIPE_ARGS[@]}" --title "$TITLE" > "$LOG_FILE" 2>&1; then
     STATUS=0
 else
     STATUS=$?
 fi
-termux-wake-unlock
+if [ "$WAKE_LOCKED" -eq 1 ]; then
+    termux-wake-unlock || echo "Canh bao: khong tat duoc wake-lock." >&2
+fi
 
 if [ $STATUS -eq 0 ]; then
-    termux-notification -t "Xong: $TITLE" -c "EPUB va PDF da san sang: ${TITLE}.epub / ${TITLE}.pdf"
+    termux-notification -t "Xong: $TITLE" -c "EPUB va PDF da san sang: ${TITLE}.epub / ${TITLE}.pdf" || echo "Canh bao: khong gui duoc thong bao Android." >&2
 else
-    termux-notification -t "Loi: $TITLE" -c "Xem $LOG_FILE"
+    termux-notification -t "Loi: $TITLE" -c "Xem $LOG_FILE" || echo "Canh bao: khong gui duoc thong bao Android." >&2
 fi

@@ -265,9 +265,19 @@ def _web_file(rel: str):
 SHARED_DOCUMENTS = os.path.expanduser("~/storage/shared/Documents")
 
 
+def _termux_shared_storage_ready() -> bool:
+    """Return whether Termux has a real, writable link to Android shared storage."""
+    if not _IS_TERMUX:
+        return True
+    shared_dir = Path(os.path.expanduser("~/storage/shared"))
+    return shared_dir.is_symlink() and shared_dir.is_dir() and os.access(shared_dir, os.W_OK)
+
+
 def _export_to_android_storage(file_path: str) -> str | None:
     """Sao chep file EPUB/PDF sang thu muc Documents/Download tren Android."""
     if not os.path.isfile(file_path):
+        return None
+    if not _termux_shared_storage_ready():
         return None
 
     candidates = [
@@ -505,6 +515,8 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             if exported:
                 target_folder_name = os.path.basename(os.path.dirname(exported))
                 STATE["epub"] = f"{epub_display_path} (da copy vao {target_folder_name})"
+            elif _IS_TERMUX:
+                STATE["epub"] = f"{epub_display_path} (chua copy duoc ra bo nho chung; hay cap quyen storage cho Termux)"
             else:
                 STATE["epub"] = epub_display_path
             STATE["pdf"] = pdf_display_path

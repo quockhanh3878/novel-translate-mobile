@@ -38,6 +38,15 @@ class TestTermuxCompatibility(unittest.TestCase):
             content = Path(PROJECT, s).read_text(encoding="utf-8")
             self.assertIn("--break-system-packages", content, f"{s} can co ho tro --break-system-packages cho Termux moi")
 
+        setup_content = Path(PROJECT, "setup_termux.sh").read_text(encoding="utf-8")
+        self.assertIn("require_termux_api", setup_content)
+        self.assertIn("require_shared_storage", setup_content)
+        self.assertIn("start_gui", setup_content)
+
+        update_content = Path(PROJECT, "update_termux.sh").read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", update_content)
+        self.assertIn("start_gui", update_content)
+
         # Kiem tra run_termux.sh co co che ho tro tieu de tu dong khi TITLE rong
         run_content = Path(PROJECT, "run_termux.sh").read_text(encoding="utf-8")
         self.assertIn("guess_title", run_content, "run_termux.sh can ho tro guess_title khi nguoi dung de trong tieu de")
@@ -107,6 +116,12 @@ class TestTermuxCompatibility(unittest.TestCase):
             # Gia lap khi storage chua duoc cap quyen (thu muc goc khong ton tai)
             with patch.object(web_gui, "SHARED_DOCUMENTS", str(tmp_root / "nonexistent" / "Documents")):
                 with patch("os.path.exists", return_value=False):
+                    dest_none = getattr(web_gui, "_export_to_android_storage")(str(fake_epub))
+                    self.assertIsNone(dest_none)
+
+            with patch.object(web_gui, "_IS_TERMUX", True):
+                with patch.object(web_gui, "SHARED_DOCUMENTS", str(fake_docs)):
+                    # Thu muc that tren may test khong phai lien ket storage cua Termux.
                     dest_none = getattr(web_gui, "_export_to_android_storage")(str(fake_epub))
                     self.assertIsNone(dest_none)
 
