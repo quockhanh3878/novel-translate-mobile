@@ -135,6 +135,79 @@ def _check_term_usage():
     assert check_term_usage(CHAPTER, ok, terms) == []
     bad = ["Cố Tùng Quân nhìn Thượng Quan Yên Hồng."]
     assert check_term_usage(CHAPTER, bad, terms) == [("顾从军", "Cố Tòng Quân")]
+    # Nguon nhac 2 lan (cung doan hoac khac doan) nhung ban dich chi dung 1 lan va sai 1 lan -> phai phat hien.
+    ch_same_para = {"title": "", "paragraphs": ["顾从军来了，顾从军又走了。"]}
+    assert check_term_usage(
+        ch_same_para,
+        ["Cố Tòng Quân đến rồi, Cố Tùng Quân lại đi rồi."],
+        {"顾从军": "Cố Tòng Quân"},
+    ) == [("顾从军", "Cố Tòng Quân")]
+    ch_twice = {"title": "", "paragraphs": ["顾从军来了。", "顾从军走了。"]}
+    partial = ["Cố Tòng Quân đến rồi.", "Cố Tùng Quân đi rồi."]
+    assert check_term_usage(ch_twice, partial, {"顾从军": "Cố Tòng Quân"}) == [("顾从军", "Cố Tòng Quân")]
+    assert check_term_usage(ch_twice, ["Cố Tòng Quân đến rồi.", "Cố Tòng Quân đi rồi."],
+                            {"顾从军": "Cố Tòng Quân"}) == []
+    # Cum ngan xuat hien doc lap ngoai cum dai nhung bi dich sai -> phai phat hien.
+    ch_both = {"title": "", "paragraphs": ["上官嫣红看了看上官。"]}
+    assert check_term_usage(ch_both, ["Thượng Quan Yên Hồng nhìn Thượng Quản."], terms) == [("上官", "Thượng Quan")]
+    assert check_term_usage(ch_both, ["Thượng Quan Yên Hồng nhìn Thượng Quan."], terms) == []
+
+
+def _check_reject_incomplete_and_preserve_title():
+    import os
+    import tempfile
+    import deepseek_translate as dt
+    from validator import validate_translation
+
+    ch = {"title": "第1章 大变活人", "paragraphs": ["第一段内容。", "第二段内容。"]}
+    orig_call = dt.call_deepseek
+    try:
+        # 1) Thieu doan van -> translate_chapter phai raise ValueError
+        dt.call_deepseek = lambda *a, **kw: {"title": "Chương 1: Đại biến người sống", "paragraphs": ["Đoạn một."]}
+        try:
+            dt.translate_chapter(ch, "sys", "k", "m", 1.0, chapter_idx=1, log=lambda *_: None)
+            raise AssertionError("Phai chan khi lech so doan")
+        except ValueError:
+            pass
+
+        # 2) Con sot chu Han -> translate_chapter phai raise ValueError
+        dt.call_deepseek = lambda *a, **kw: {
+            "title": "Chương 1: Đại biến người sống",
+            "paragraphs": ["Đoạn một.", "Đoạn hai còn 漢字."],
+        }
+        try:
+            dt.translate_chapter(ch, "sys", "k", "m", 1.0, chapter_idx=1, log=lambda *_: None)
+            raise AssertionError("Phai chan khi con sot chu Han")
+        except ValueError:
+            pass
+
+        # 3) Hop le -> giu ten chuong da dich theo dinh dang "Chương 1: Đại biến người sống"
+        dt.call_deepseek = lambda *a, **kw: {
+            "title": "Đại biến người sống",
+            "paragraphs": ["Đoạn một.", "Đoạn hai."],
+        }
+        res = dt.translate_chapter(ch, "sys", "k", "m", 1.0, chapter_idx=1, log=lambda *_: None)
+        assert res["title"] == "Chương 1: Đại biến người sống", res["title"]
+
+        # 4) translate_novel khong luu chuong loi va dich lai khi resume
+        with tempfile.TemporaryDirectory() as d:
+            raw_p = os.path.join(d, "raw.txt")
+            out_p = os.path.join(d, "out.viet.txt")
+            with open(raw_p, "w", encoding="utf-8") as f:
+                f.write("=== 第1章 大变活人 ===\n\n第一段。\n\n第二段。\n\n" + "=" * 40 + "\n\n")
+            dt.call_deepseek = lambda *a, **kw: {"title": "Chương 1", "paragraphs": ["Chỉ một đoạn kèm 字."]}
+            failed = dt.translate_novel(raw_p, out_p, None, "k", style_detect=False,
+                                        prepare=False, avoid_peak=False, log=lambda *_: None)
+            assert len(failed) == 1 and dt.count_chapters(out_p) == 0, (failed, dt.count_chapters(out_p))
+
+            # Validator canh bao ngay ca khi chi co 1 chu Han hoac lech so doan
+            bad_out = os.path.join(d, "bad.viet.txt")
+            with open(bad_out, "w", encoding="utf-8") as f:
+                f.write("=== Chương 1 ===\n\nChỉ một đoạn kèm 字.\n\n" + "=" * 40 + "\n\n")
+            warnings = validate_translation(raw_p, bad_out, log=lambda *_: None)
+            assert len(warnings) >= 2, warnings
+    finally:
+        dt.call_deepseek = orig_call
 
 
 def _check_cleanup_keeps_glossary():
@@ -179,6 +252,7 @@ def main():
     _check_clean_new_terms()
     _check_merge_never_overwrites()
     _check_term_usage()
+    _check_reject_incomplete_and_preserve_title()
     _check_cleanup_keeps_glossary()
     _check_sse_usage()
     print("OK: glossary theo chuong/tu dien thanh ngu/merge/check/cleanup/sse-usage hoat dong dung.")

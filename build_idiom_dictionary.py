@@ -32,7 +32,7 @@ from deepseek_translate import (_CJK_RE, _CURATED_IDIOMS_PATH, _idiom_detector, 
                                 DEFAULT_MODEL, IDIOM_PRIORITY_RULES,
                                 idioms_path_for,
                                 load_curated_idioms, load_dotenv, load_idiom_memory,
-                                normalize_zh, save_idiom_memory)
+                                log_usage, normalize_zh, save_idiom_memory)
 
 PRETRANSLATE_PROMPT = """Bạn là biên tập viên dịch tiểu thuyết Trung -> Việt, đang lập bảng cách dịch
 thành ngữ cho CẢ BỘ truyện trước khi dịch. Với MỖI thành ngữ (kèm một câu trích trong truyện làm
@@ -83,6 +83,7 @@ def pretranslate(keys: list[str], examples: dict, api_key: str, model: str,
         data = call_deepseek(PRETRANSLATE_PROMPT + style, "Thành ngữ | câu trích:\n" + lines, api_key, model,
                              temperature=1.0, thinking=True, max_tokens=65536,
                              on_usage=usage.update, reasoning_effort=reasoning_effort)
+        log_usage(log, usage)
         got = data.get("idioms") if isinstance(data, dict) else None
         good = {}
         for k, v in (got or {}).items():

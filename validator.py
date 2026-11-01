@@ -29,22 +29,31 @@ def validate_translation(raw_file: str, translated_file: str, log=print) -> list
         warnings.append({"type": "warning", "message": msg})
         
     # 2. Kiem tra noi dung tung chuong
-    chinese_char_pattern = re.compile(r'[\u4e00-\u9fff]')
+    chinese_char_pattern = re.compile(r'[\u3400-\u9fff\uf900-\ufaff]')
     
     for idx, ch in enumerate(trans_chapters, 1):
-        paras = ch.get("paragraphs", [])
+        paras = [p for p in ch.get("paragraphs", []) if p and p.strip()]
         
         # 2.1 Chuong rong
-        if not paras or all(not p.strip() for p in paras):
+        if not paras:
             msg = f"CANH BAO: Chuong {idx} ({ch.get('title')}) bi rong noi dung."
             log(msg)
             warnings.append({"type": "warning", "chapter": idx, "message": msg})
             continue
             
-        # 2.2 Ton du tieng Han
+        # 2.2 Lech so doan van so voi chuong goc
+        if idx <= len(raw_chapters):
+            raw_paras = [p for p in raw_chapters[idx - 1].get("paragraphs", []) if p and p.strip()]
+            if len(paras) != len(raw_paras):
+                msg = (f"CANH BAO: Chuong {idx} ({ch.get('title')}) lech so doan "
+                       f"(Dich: {len(paras)} doan, Goc: {len(raw_paras)} doan).")
+                log(msg)
+                warnings.append({"type": "warning", "chapter": idx, "message": msg})
+
+        # 2.3 Ton du tieng Han
         full_text = "\n".join(paras)
         matches = chinese_char_pattern.findall(full_text)
-        if len(matches) > 10:  # Cho phep du mot so it ky tu
+        if matches:
             msg = f"CANH BAO: Chuong {idx} ({ch.get('title')}) ton du {len(matches)} ky tu tieng Han. Nghi ngo LLM bo sot hoac khong dich."
             log(msg)
             warnings.append({"type": "warning", "chapter": idx, "message": msg})

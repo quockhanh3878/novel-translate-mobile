@@ -38,7 +38,7 @@ from build_idiom_dictionary import pretranslate, scan_novel
 from deepseek_translate import (_CJK_RE, _CJK_RUN_RE, DEFAULT_MODEL, _chapter_text, _idiom_detector,
                                 _novel_base, call_deepseek, glossary_path_for, idioms_path_for,
                                 load_curated_idioms, load_dotenv, load_glossary, load_idiom_memory,
-                                merge_new_terms, normalize_zh, save_glossary, save_idiom_memory)
+                                log_usage, merge_new_terms, normalize_zh, save_glossary, save_idiom_memory)
 
 PREPARE_EFFORT = "high"
 NAME_BATCH = 150
@@ -246,6 +246,7 @@ def decide_names(candidates: list[dict], known: dict, api_key: str, model: str =
         usage: dict = {}
         data = call_deepseek(NAME_PROMPT, user, api_key, model, temperature=1.0, thinking=True,
                              max_tokens=65536, on_usage=usage.update, reasoning_effort=reasoning_effort)
+        log_usage(log, usage)
         allowed = {c["zh"] for c in batch}
         good = {}
         for zh, info in ((data or {}).get("names") or {}).items():

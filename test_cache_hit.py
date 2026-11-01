@@ -32,5 +32,19 @@ def main():
     else:
         print("\n[FAILED] System prompt glossary is missing or order is incorrect!")
 
+    # Kiem tra co lap cache giua 2 truyen cung thu muc va theo noi dung nguon
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        out_a = os.path.join(d, "truyen_a.viet.txt")
+        out_b = os.path.join(d, "truyen_b.viet.txt")
+        ch_a = {"title": "第1章", "paragraphs": ["Nội dung truyện A."]}
+        ch_b = {"title": "第1章", "paragraphs": ["Nội dung truyện B."]}
+        dt._save_cache(out_a, 1, {"title": "Chương 1", "paragraphs": ["Bản dịch A."]}, ch_a)
+        assert dt._load_cache(out_a, 1, ch_a)["paragraphs"] == ["Bản dịch A."]
+        assert dt._load_cache(out_b, 1, ch_b) is None, "Truyen B khong duoc doc nham cache cua truyen A"
+        assert dt._load_cache(out_a, 1, ch_b) is None, "Noi dung nguon thay doi phai bo qua cache cu"
+        print("[PASSED] Write-ahead cache isolated per novel and source content.")
+
 if __name__ == "__main__":
     main()

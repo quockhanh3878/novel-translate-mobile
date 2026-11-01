@@ -52,6 +52,10 @@ class _FakeApi:
 
     def __call__(self, system_prompt, user_prompt, *args, **kwargs):
         self.calls.append((system_prompt, user_prompt, kwargs.get("reasoning_effort")))
+        on_usage = kwargs.get("on_usage")
+        if on_usage:
+            on_usage({"prompt_tokens": 1000, "prompt_cache_hit_tokens": 600,
+                      "prompt_cache_miss_tokens": 400, "completion_tokens": 200, "total_tokens": 1200})
         if "TÊN RIÊNG" in system_prompt:
             rows = user_prompt.split("câu trích:\n", 1)[1].splitlines()
             keys = [r.split(" | ")[0] for r in rows]
@@ -74,7 +78,11 @@ def _check_prepare_novel():
                        "杯水车薪": {"vi": "một cốc nước", "source": "dich_truoc"}},
                       open(ipath, "w", encoding="utf-8"), ensure_ascii=False)
             chapters = _chapters(["任九贵", "华登峰", "邓燕", "岚海市"])
-            summary = run_prepare(chapters, out, None, "k", log=lambda m: None)
+            prep_logs = []
+            summary = run_prepare(chapters, out, None, "k", log=prep_logs.append)
+            import web_gui
+            usage_hits = [line for line in prep_logs if web_gui.USAGE_LINE_RE.search(line)]
+            assert len(usage_hits) == 2, prep_logs
 
             glossary = load_glossary(gpath)
             assert glossary["邓燕"] == "Đặng Yến", "ten da co khong bi ghi de"

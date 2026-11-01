@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+import hashlib
 import json
 import os
 import random
@@ -64,28 +65,69 @@ _STREAM_THRESHOLD = 8192
 # --- Write-ahead cache: luu ket qua API truoc khi ghi file chinh ---
 # Tranh mat phi API khi crash/timeout giua luc postprocess hoac ghi file output.
 
+def _novel_cache_key(output_file: str) -> str:
+    abs_out = os.path.abspath(output_file)
+    base = os.path.basename(abs_out)
+    stem = base.rsplit(".", 1)[0] if "." in base else base
+    safe_stem = re.sub(r"[^a-zA-Z0-9_.-]+", "_", stem).strip("_.") or "novel"
+    short_hash = hashlib.sha256(abs_out.encode("utf-8")).hexdigest()[:8]
+    return f"{safe_stem}_{short_hash}"
+
+
+def _chapter_source_hash(chapter: dict) -> str:
+    payload = json.dumps(
+        {
+            "title": chapter.get("title", ""),
+            "paragraphs": chapter.get("paragraphs", []),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _cache_dir(output_file: str) -> str:
-    """Thu muc cache nam cung cap voi file output."""
-    return os.path.join(os.path.dirname(os.path.abspath(output_file)) or ".", ".translation_cache")
+    """Thu muc cache rieng cua truyen, nam trong .translation_cache cung cap voi file output."""
+    parent = os.path.dirname(os.path.abspath(output_file)) or "."
+    return os.path.join(parent, ".translation_cache", _novel_cache_key(output_file))
 
 
-def _save_cache(output_file: str, chapter_idx: int, data: dict) -> None:
+def _save_cache(output_file: str, chapter_idx: int, data: dict,
+                chapter: dict | None = None) -> None:
     d = _cache_dir(output_file)
     os.makedirs(d, exist_ok=True)
     cache_file = os.path.join(d, f"ch_{chapter_idx}.json")
+    to_save = dict(data)
+    if chapter is not None:
+        to_save["_source_hash"] = _chapter_source_hash(chapter)
     with open(cache_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+        json.dump(to_save, f, ensure_ascii=False)
 
 
-def _load_cache(output_file: str, chapter_idx: int) -> dict | None:
+def _load_cache(output_file: str, chapter_idx: int,
+                chapter: dict | None = None) -> dict | None:
     cache_file = os.path.join(_cache_dir(output_file), f"ch_{chapter_idx}.json")
     if not os.path.exists(cache_file):
         return None
     try:
         with open(cache_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+    if not isinstance(data, dict):
+        return None
+    if chapter is not None:
+        src_hash = data.get("_source_hash")
+        if src_hash and src_hash != _chapter_source_hash(chapter):
+            return None
+        paras = data.get("paragraphs")
+        src_paras = chapter.get("paragraphs", [])
+        if not isinstance(paras, list) or len(paras) != len(src_paras):
+            return None
+        if any(_CJK_RUN_RE.search(str(p)) for p in paras):
+            return None
+    data.pop("_source_hash", None)
+    return data
 
 
 def _delete_cache(output_file: str, chapter_idx: int) -> None:
@@ -103,6 +145,13 @@ def _clear_cache(output_file: str) -> None:
         import shutil
         try:
             shutil.rmtree(d)
+        except OSError:
+            pass
+    root_cache = os.path.dirname(d)
+    if os.path.isdir(root_cache):
+        try:
+            if not os.listdir(root_cache):
+                os.rmdir(root_cache)
         except OSError:
             pass
 # Giu ten cu de tuong thich nguoc voi code/test da import truoc do.
@@ -199,7 +248,8 @@ TRANSLATE_SYSTEM_PROMPT = """Ban la dich gia tieu thuyet mang chuyen nghiep, dic
 {style_guide_block}
 Yeu cau bat buoc:
 1. Dich tu nhien, dung van phong da xac dinh o tren, loi thoai song dong, khong dich
-   tung chu mot cach may moc.
+   tung chu mot cach may moc. Chu y cau hoi tu tu / phu dinh kep tieng Trung (VD: "不比...高？"
+   nghia la "Chẳng phải ... cao hơn ... sao?", KHONG dich nguoc thanh "đâu có cao hơn").
 2. THÀNH NGỮ, TỤC NGỮ, ĐIỂN CỐ - chọn theo thứ tự ưu tiên:
 """ + IDIOM_PRIORITY_RULES + """   Cuối prompt có danh sách thành ngữ của chương: nhóm "đã có cách dịch" thì dùng lại đúng
    cách dịch đó cho thống nhất cả truyện; nhóm "mới" chỉ là nghĩa tham khảo, KHÔNG chép nguyên.
@@ -687,19 +737,38 @@ def merge_new_terms(glossary: dict, new_terms: dict) -> dict:
 
 def check_term_usage(chapter: dict, paragraphs: list[str], terms: dict) -> list[tuple[str, str]]:
     """Kiem tra sau dich: muc glossary co trong ban goc thi ban dich phai chua dung
-    ban dich co dinh. Cum ngan nam tron trong cum dai hon (vd ho 上官 trong 上官嫣红)
-    duoc bo qua neu khong con xuat hien doc lap. Tra ve [(zh, vi)] bi thieu."""
-    text = _chapter_text(chapter)
-    output = "\n".join(paragraphs).lower()
-    missing = []
-    for zh in sorted(terms, key=lambda k: len(normalize_zh(k)), reverse=True):
-        key = normalize_zh(zh)
-        if key not in text:
-            continue
-        text = text.replace(key, "\0")
-        if terms[zh].lower() not in output:
-            missing.append((zh, terms[zh]))
-    return missing
+    ban dich co dinh o MOI lan xuat hien. Cum ngan nam tron trong cum dai hon
+    (vd ho 上官 trong 上官嫣红) duoc bo qua neu khong con xuat hien doc lap.
+    Tra ve [(zh, vi)] bi thieu hoac dich sai mot phan."""
+    sorted_zh = [zh for zh in sorted(terms, key=lambda k: len(normalize_zh(k)), reverse=True) if zh]
+    src_paras = chapter.get("paragraphs", [])
+
+    def _missing_in_pair(src_text: str, dst_text: str) -> set[str]:
+        s = normalize_zh(src_text)
+        d = dst_text.lower()
+        bad = set()
+        for zh in sorted_zh:
+            key = normalize_zh(zh)
+            vi_low = terms[zh].lower()
+            src_count = s.count(key)
+            if src_count <= 0:
+                continue
+            s = s.replace(key, "\0")
+            dst_count = d.count(vi_low) if vi_low else 0
+            if dst_count < src_count:
+                bad.add(zh)
+            if vi_low:
+                d = d.replace(vi_low, "\0")
+        return bad
+
+    flagged: set[str] = set()
+    if len(src_paras) == len(paragraphs) and src_paras:
+        for sp, dp in zip(src_paras, paragraphs):
+            flagged |= _missing_in_pair(sp, dp)
+    else:
+        flagged |= _missing_in_pair(_chapter_text(chapter), "\n".join(paragraphs))
+
+    return [(zh, terms[zh]) for zh in sorted_zh if zh in flagged]
 
 
 def _parse_sse_stream(response):
@@ -850,8 +919,53 @@ def call_deepseek(system_prompt: str, user_prompt: str, api_key: str, model: str
     raise RuntimeError(f"DeepSeek API failed after {max_retries} attempts: {last_err}")
 
 
+def format_usage_log(u: dict) -> str:
+    """Dinh dang dong log [usage] thong nhat cho toan quy trinh de GUI/log parser cong du chi phi."""
+    u = u or {}
+    prompt_tokens = int(u.get("prompt_tokens") or 0)
+    cache_hit = int(u.get("prompt_cache_hit_tokens") or 0)
+    raw_miss = u.get("prompt_cache_miss_tokens")
+    cache_miss = int(raw_miss) if raw_miss is not None else max(0, prompt_tokens - cache_hit)
+    completion_tokens = int(u.get("completion_tokens") or 0)
+    details = u.get("completion_tokens_details") or {}
+    reasoning_tokens = int(details.get("reasoning_tokens") or 0)
+    total_tokens = int(u.get("total_tokens") or (prompt_tokens + completion_tokens))
+    return (
+        f"[usage] prompt_tokens={prompt_tokens} "
+        f"(cache_hit={cache_hit}, cache_miss={cache_miss}) "
+        f"completion_tokens={completion_tokens} "
+        f"(reasoning={reasoning_tokens}) "
+        f"total_tokens={total_tokens}"
+    )
+
+
+def log_usage(log, u: dict) -> None:
+    if log and u:
+        log(format_usage_log(u))
+
+
+_CHAPTER_PREFIX_RE = re.compile(
+    r"^(?:chương|chapter)\s*\d*\s*(?:[:.\-–—]\s*)?",
+    re.IGNORECASE,
+)
+
+
+def _format_chapter_title(raw_title: str, chapter_idx: int | None,
+                          fallback_title: str = "") -> str:
+    """Chuan hoa tieu de chuong da dich.
+    Neu co chapter_idx: dam bao bat dau bang 'Chương <chapter_idx>', va giu lai phan ten chuong
+    da dich (neu co va khong con chu Han) theo dinh dang 'Chương <chapter_idx>: <ten chuong>'."""
+    cleaned = postprocess_title(raw_title or "")
+    if chapter_idx is None:
+        return cleaned if cleaned else fallback_title
+    subtitle = postprocess_title(_CHAPTER_PREFIX_RE.sub("", cleaned))
+    if subtitle and not _CJK_RE.search(subtitle):
+        return f"Chương {chapter_idx}: {subtitle}"
+    return f"Chương {chapter_idx}"
+
+
 def detect_style_guide(chapters: list[dict], api_key: str, model: str,
-                       should_stop=None) -> dict:
+                       should_stop=None, log=print) -> dict:
     """Phan tich van phong tu nhieu chuong nhau trong truyen."""
     sampled = sample_for_style(chapters)
     if not sampled:
@@ -865,7 +979,8 @@ def detect_style_guide(chapters: list[dict], api_key: str, model: str,
     try:
         data = call_deepseek(STYLE_SYSTEM_PROMPT, user_prompt, api_key, model, temperature=1.0,
                               max_retries=3, thinking=True, max_tokens=8192,
-                              should_stop=should_stop)
+                              should_stop=should_stop,
+                              on_usage=lambda u: log_usage(log, u))
         return data
     except RuntimeError:
         return {}
@@ -912,30 +1027,25 @@ def translate_chapter(chapter: dict, system_prompt: str, api_key: str,
 
     def _log_usage(u):
         usage.update(u)
-        details = u.get("completion_tokens_details") or {}
-        log(f"[usage] prompt_tokens={u.get('prompt_tokens')} "
-            f"(cache_hit={u.get('prompt_cache_hit_tokens')}, cache_miss={u.get('prompt_cache_miss_tokens')}) "
-            f"completion_tokens={u.get('completion_tokens')} "
-            f"(reasoning={details.get('reasoning_tokens')}) "
-            f"total_tokens={u.get('total_tokens')}")
+        log_usage(log, u)
 
     result = call_deepseek(system_prompt, user_prompt, api_key, model, temperature,
                             thinking=thinking, max_tokens=131072, should_stop=should_stop,
                             on_usage=_log_usage, reasoning_effort=reasoning_effort)
-    if chapter_idx is not None:
-        title = f"Chương {chapter_idx}"
-    else:
-        title = postprocess_title(result.get("title", "")) if result.get("title") else chapter["title"]
+    title = _format_chapter_title(result.get("title", ""), chapter_idx, fallback_title=chapter["title"])
     # Strip zero-width space markers (sau khi DeepSeek tra ve - co the con sot)
     raw_paragraphs = [p for p in result.get("paragraphs", []) if p and p.strip()]
     paragraphs = [postprocess(p).replace("\u200B", "") for p in raw_paragraphs]
     new_terms = clean_new_terms(result.get("new_terms") or result.get("new_names") or {}, chapter)
     new_terms, idioms_in_terms = split_idiom_terms(new_terms, idiom_memory)
     if len(paragraphs) != len(chapter["paragraphs"]):
-        log(f"  CANH BAO: so doan dich {len(paragraphs)} != so doan goc {len(chapter['paragraphs'])}")
+        msg = f"so doan dich {len(paragraphs)} != so doan goc {len(chapter['paragraphs'])}"
+        log(f"  CANH BAO: {msg}")
+        raise ValueError(f"Ban dich khong khop so doan ({msg})")
     leftover = [(i + 1, m) for i, p in enumerate(paragraphs) for m in _CJK_RUN_RE.findall(p)]
     if leftover:
         log(f"  CANH BAO: con sot chu Han chua dich: {leftover[:10]}")
+        raise ValueError(f"Ban dich con sot chu Han chua dich: {leftover[:5]}")
     term_warnings = check_term_usage(chapter, paragraphs, chapter_terms)
     for zh, vi in term_warnings:
         log(f"  CANH BAO thuat ngu: '{zh}' phai dich la '{vi}' nhung khong thay trong ban dich")
@@ -1017,7 +1127,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
 
         if not style_guide:
             log("Dang phan tich van phong tu nhieu chuong (dau/giua/cuoi)...")
-            style_data = detect_style_guide(chapters, api_key, model, should_stop=should_stop)
+            style_data = detect_style_guide(chapters, api_key, model, should_stop=should_stop, log=log)
             if isinstance(style_data, dict):
                 style_guide = style_data.get("style_guide", "").strip()
                 term_categories = style_data.get("term_categories", term_categories).strip()
@@ -1068,7 +1178,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
             return {"title": ch["title"], "paragraphs": [], "new_terms": {}, "idioms": {},
                     "term_warnings": [], "usage": {}}
         # Kiem tra write-ahead cache truoc khi goi API
-        cached = _load_cache(output_file, chapter_idx)
+        cached = _load_cache(output_file, chapter_idx, ch)
         if cached is not None:
             log(f"[{chapter_idx}/{len(chapters)}] Cache hit - bo qua API call")
             return cached
@@ -1077,7 +1187,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                                   chapter_idx=chapter_idx - title_offset, log=log, glossary=glossary_snapshot,
                                   reasoning_effort=reasoning_effort, idiom_memory=idiom_snapshot)
         # Ghi write-ahead cache ngay khi API tra ve thanh cong
-        _save_cache(output_file, chapter_idx, result)
+        _save_cache(output_file, chapter_idx, result, ch)
         return result
 
     # Nop theo tung dot toi da `workers` chuong (khong dung executor.map()): map() nop
@@ -1097,7 +1207,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                 if style_detect and current_idx - last_style_eval_idx >= 200:
                     log(f"Đã qua {current_idx - last_style_eval_idx} chương, đang tái đánh giá văn phong cho arc mới...")
                     recent_chapters = chapters[max(0, current_idx-30):current_idx+30]
-                    style_data = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop)
+                    style_data = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop, log=log)
                     new_style = style_data.get("style_guide", "").strip() if isinstance(style_data, dict) else (style_data.strip() if isinstance(style_data, str) else "")
                     new_term_cats = style_data.get("term_categories", "").strip() if isinstance(style_data, dict) else ""
                     if new_style:
@@ -1148,7 +1258,9 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                     if is_novel_title_entry(chapters, idx - 1):
                         translated["title"] = ch["title"]
                     else:
-                        translated["title"] = f"Chương {idx - title_offset}"
+                        translated["title"] = _format_chapter_title(
+                            translated.get("title", ""), idx - title_offset, fallback_title=ch["title"]
+                        )
                     f_out.write(f"=== {translated['title']} ===\n\n")
                     for p in translated["paragraphs"]:
                         f_out.write(f"{p}\n\n")
@@ -1326,7 +1438,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                 break  # nguoi dung dung luc dang cho het gio cao diem
 
             # Kiem tra write-ahead cache
-            cached = _load_cache(output_file, source_index)
+            cached = _load_cache(output_file, source_index, chapter)
             if cached is not None:
                 log(f"[{source_index}] Cache hit - bo qua API call")
                 translated = cached
@@ -1339,7 +1451,7 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                         reasoning_effort=reasoning_effort, idiom_memory=idiom_memory
                     )
                     # Ghi write-ahead cache ngay khi API tra ve thanh cong
-                    _save_cache(output_file, source_index, translated)
+                    _save_cache(output_file, source_index, translated, chapter)
                 except InsufficientBalanceError as e:
                     log(f"\n{'='*60}")
                     log(f"[!!! HET SO DU API !!!] {e}")
@@ -1353,7 +1465,9 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                     failed_chapters.append({"index": source_index, "title": chapter["title"], "error": str(e)})
                     continue
 
-            translated["title"] = f"Chương {source_index}"  # ghi de ca ket qua cache cu
+            translated["title"] = _format_chapter_title(
+                translated.get("title", ""), source_index, fallback_title=chapter["title"]
+            )
             _write_stream_translation(output_file, source_index, translated)
             # Ghi file chinh thanh cong -> xoa cache
             _delete_cache(output_file, source_index)
