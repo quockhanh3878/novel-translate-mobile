@@ -194,24 +194,47 @@
     }
 
     rawFileInput.onchange = async () => {
-        const file = rawFileInput.files[0];
-        if (!file) return;
-        setFileStatus('', 'Đang tải file lên...');
+        const files = Array.from(rawFileInput.files || []);
+        if (!files.length) return;
+        setFileStatus('', '\u0110ang x\u1eed l\u00fd file...');
         try {
-            const text = await file.text();
-            const r = await fetch('/upload_raw?name=' + encodeURIComponent(file.name), {
-                method: 'POST', body: text
-            });
+            const htmlFiles = files.filter(file => /\.(?:html?|mht|mhtml)$/i.test(file.name));
+            htmlFiles.sort((a, b) => a.name.localeCompare(
+                b.name, undefined, { numeric: true, sensitivity: 'base' }));
+            let r;
+            if (htmlFiles.length) {
+                if (htmlFiles.length !== files.length) {
+                    throw new Error('H\u00e3y ch\u1ecdn c\u00e1c file HTML ho\u1eb7c m\u1ed9t file TXT, kh\u00f4ng ch\u1ecdn l\u1eabn.');
+                }
+                const payload = {
+                    files: await Promise.all(htmlFiles.map(async file => ({
+                        name: file.name,
+                        html: await file.text()
+                    })))
+                };
+                r = await fetch('/import_html', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } else {
+                if (files.length !== 1) throw new Error('M\u1ed7i l\u1ea7n ch\u1ec9 ch\u1ecdn m\u1ed9t file TXT.');
+                const file = files[0];
+                r = await fetch('/upload_raw?name=' + encodeURIComponent(file.name), {
+                    method: 'POST', body: await file.text()
+                });
+            }
             const data = await r.json();
-            if (data.success) {
+            if (r.ok && data.success) {
                 inputSource.value = data.path;
-                setFileStatus('ok', 'Đã chọn file: ' + data.path);
+                const detail = data.chapters ? `\u0110\u00e3 nh\u1eadp ${data.chapters} ch\u01b0\u01a1ng t\u1eeb HTML. ` : '';
+                setFileStatus('ok', detail + 'File d\u1eef li\u1ec7u: ' + data.path);
                 scheduleEstimate();
             } else {
-                setFileStatus('bad', data.message || 'Lỗi tải file.');
+                setFileStatus('bad', data.message || 'L\u1ed7i t\u1ea3i file.');
             }
         } catch (err) {
-            setFileStatus('bad', 'Lỗi tải file: ' + err.message);
+            setFileStatus('bad', 'L\u1ed7i nh\u1eadp file: ' + err.message);
         }
     };
 
@@ -403,6 +426,7 @@
     // ---------- Chay / dung ----------
 
     const btnStart = $('btn-start');
+    const btnCrawlOnly = $('btn-crawl-only');
     const btnStop = $('btn-stop');
     const logEl = $('log');
     const resultEl = $('result');
@@ -458,7 +482,8 @@
 
     form.onsubmit = async (e) => {
         e.preventDefault();
-        if (!hasKey) {
+        const crawlOnly = e.submitter && e.submitter.dataset.mode === 'crawl_only';
+        if (!crawlOnly && !hasKey) {
             notify('Chưa có API Key. Hãy nhập và bấm Lưu Key trước khi dịch.', 'warn', 6000);
             apiKeyInput.focus();
             return;
@@ -467,6 +492,7 @@
         setResult(null);
         const params = new URLSearchParams();
         new FormData(form).forEach((value, key) => params.append(key, value));
+        if (crawlOnly) params.set('mode', 'crawl_only');
         try {
             const r = await fetch('/', { method: 'POST', body: params });
             if (!r.ok) throw new Error('Máy chủ trả về mã ' + r.status);
@@ -497,10 +523,18 @@
         $('step-translate').querySelector('.step-label').textContent = isStream ? 'Stream' : 'Dịch thuật';
     }
 
-    function updateSteps(currentStep, isStream) {
+    function updateSteps(currentStep, isStream, crawlOnly) {
         setStepLabels(isStream);
+        if (crawlOnly) {
+            $('step-crawl').querySelector('.step-label').textContent = 'C\u00e0o ch\u01b0\u01a1ng';
+            $('step-translate').querySelector('.step-label').textContent = 'B\u1ecf qua d\u1ecbch';
+        }
         STEP_IDS.forEach((id) => { $(id).className = 'step'; });
         if (currentStep === 'idle') return;
+        if (crawlOnly && currentStep === 'done') {
+            $('step-crawl').className = 'step completed';
+            return;
+        }
 
         const stateToIdx = isStream
             ? { streaming: 0, validating: 2, packaging: 2, done: 3 }
@@ -558,7 +592,9 @@
     }
 
     function renderResult(s) {
-        if (s.epub) {
+        if (s.crawl_only && s.step === 'done') {
+            setResult('success', 'Da cao ' + s.crawled_chapters + ' chuong. File tho luu tai: ' + s.raw_file);
+        } else if (s.epub) {
             setResult('success', 'Thành công. File EPUB lưu tại: ' + s.epub);
             if (s.pdf) resultEl.textContent += ' | PDF: ' + s.pdf;
         } else if (s.stop_requested && !s.running) {
@@ -576,23 +612,24 @@
             const s = await r.json();
 
             btnStart.disabled = s.running;
+            btnCrawlOnly.disabled = s.running;
             btnStop.hidden = !s.running;
             if (s.running) btnStop.disabled = !!s.stop_requested;
 
             logEl.textContent = s.log;
             if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
 
-            updateSteps(s.step, s.stream_mode);
+            lastStatus = s;
+            updateSteps(s.step, s.stream_mode, s.crawl_only);
             renderProgress(s);
             costSpent.hidden = !(Number(s.cost_spent) > 0);
             if (!costSpent.hidden) costSpent.textContent = 'Đã tiêu khoảng ' + formatUsd(s.cost_spent);
             fileInfo.textContent = s.raw_file
-                ? 'File thô: ' + s.raw_file + '  |  File dịch: ' + s.translated_file + (s.epub_path ? '  |  EPUB: ' + s.epub_path : '')
+                ? (s.crawl_only ? 'File tho: ' + s.raw_file : 'File thô: ' + s.raw_file + '  |  File dịch: ' + s.translated_file + (s.epub_path ? '  |  EPUB: ' + s.epub_path : ''))
                 : '';
-            if (s.raw_file && s.pdf_path) fileInfo.textContent += '  |  PDF: ' + s.pdf_path;
+            if (!s.crawl_only && s.raw_file && s.pdf_path) fileInfo.textContent += '  |  PDF: ' + s.pdf_path;
             renderResult(s);
 
-            lastStatus = s;
             if (s.error_detail) {
                 errorReport.hidden = false;
                 errorDetailText.textContent = s.error_detail;

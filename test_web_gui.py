@@ -174,6 +174,36 @@ def demo():
             with open(up_res["path"], "rb") as uf:
                 assert uf.read() == upload_data
 
+        saved_html = {
+            "files": [{
+                "name": "sample_1.html",
+                "html": "<div class='title'>Chapter 1</div><div class='content'>"
+                        "<p>A saved chapter with enough text to import.</p></div>",
+            }]
+        }
+        req_html = urllib.request.Request(
+            base + "/import_html", method="POST",
+            data=json.dumps(saved_html).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req_html, timeout=5) as resp:
+            html_result = json.loads(resp.read().decode("utf-8"))
+        assert html_result["success"] and html_result["chapters"] == 1
+        with open(html_result["path"], "r", encoding="utf-8") as imported:
+            imported_text = imported.read()
+        assert "=== Chapter 1 ===" in imported_text
+        assert "A saved chapter with enough text to import." in imported_text
+
+        blocked_html = {"files": [{"name": "blocked.html", "html": "challenge_required"}]}
+        req_blocked = urllib.request.Request(
+            base + "/import_html", method="POST", data=json.dumps(blocked_html).encode("utf-8"),
+        )
+        try:
+            urllib.request.urlopen(req_blocked, timeout=5)
+            raise AssertionError("A saved challenge page must not be imported as chapter text.")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400 and "xac minh" in exc.read().decode("utf-8")
+
         # Test library va download voi output_dir tuy chon
         custom_out_dir = os.path.join(_work.name, "CustomOutput")
         os.makedirs(custom_out_dir, exist_ok=True)

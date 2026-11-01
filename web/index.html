@@ -20,7 +20,7 @@
 
         <div id="key-warning" class="result-box error key-warning" role="alert" hidden>
             <strong>Thiếu DEEPSEEK_API_KEY.</strong>
-            Nhập API Key vào ô bên dưới rồi bấm <strong>Lưu Key</strong> để bắt đầu dịch.
+            Cần API Key để dịch. Chế độ <strong>Chỉ cào chương</strong> không cần API Key.
         </div>
 
         <section class="card" aria-labelledby="key-label">
@@ -47,8 +47,8 @@
             <input name="input" id="input_source" placeholder="Link truyện hoặc đường dẫn file .txt thô" aria-describedby="source-hint" required>
             <p class="hint source-hint" id="source-hint">Link truyện: https://uukanshu.cc/book/11966/ (trang mục lục), hoặc link chương 1 dạng .../ten-truyen_1.html (kết thúc bằng _số.html)</p>
             <div class="file-upload-row">
-                <label for="raw_file_input">Hoặc chọn file đã cào sẵn từ máy...</label>
-                <input type="file" id="raw_file_input" accept=".txt,text/plain" hidden>
+                <label for="raw_file_input">Chọn TXT đã cào hoặc HTML/MHTML chương đã lưu từ trình duyệt...</label>
+                <input type="file" id="raw_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
                 <div class="file-status" id="raw_file_status" role="status" hidden></div>
             </div>
 
@@ -173,6 +173,7 @@
 
             <div class="btn-group">
                 <button type="submit" class="btn btn-start" id="btn-start">Bắt đầu dịch</button>
+                <button type="submit" class="btn-small" id="btn-crawl-only" data-mode="crawl_only">Chỉ cào chương</button>
                 <button type="button" class="btn btn-stop" id="btn-stop" hidden>Dừng lại</button>
             </div>
         </form>

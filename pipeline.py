@@ -72,6 +72,8 @@ def main():
     parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Validate -> Dong goi EPUB + PDF")
     parser.add_argument("--start-url", default=None,
                          help="URL chuong 1 de cao (bo qua neu da co san --raw)")
+    parser.add_argument("--crawl-only", action="store_true",
+                         help="Chi cao va luu file tho, khong can API key va khong dich")
     parser.add_argument("--raw", default=DEFAULT_OUTPUT, help="File luu noi dung tho da cao")
     parser.add_argument("--translated", default=None,
                          help="File luu ban dich, mac dinh <raw>.viet.txt")
@@ -112,9 +114,12 @@ def main():
 
     load_dotenv(args.env_file)
     api_key = args.api_key or os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
+    if not args.crawl_only and not api_key:
         print(f"Error: thieu DEEPSEEK_API_KEY (dat trong {args.env_file}, bien moi truong, hoac --api-key).")
         sys.exit(1)
+
+    if args.crawl_only and not args.start_url:
+        parser.error("--crawl-only yeu cau --start-url")
 
     translated_file = args.translated or f"{args.raw}.viet.txt"
     epub_path = args.epub or f"{args.title}.epub"
@@ -128,7 +133,7 @@ def main():
 
     # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB/PDF ngay luon
     # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi.
-    if os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
+    if not args.crawl_only and os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
         from crawler import count_chapters as _count_vi
         existing_count = _count_vi(translated_file)
         if existing_count > 0:
@@ -146,6 +151,12 @@ def main():
     trans_dir = os.path.dirname(os.path.abspath(translated_file))
     if raw_dir != trans_dir:
         _check_disk_space(translated_file)
+
+    if args.crawl_only:
+        print("=== Buoc 1/1: Cao truyen (chi luu ban tho) ===")
+        saved = crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
+        print(f"Da cao va luu {saved} chuong vao: {args.raw}")
+        return
 
     print("=== Buoc 1/4: Cao truyen ===")
     failed = []

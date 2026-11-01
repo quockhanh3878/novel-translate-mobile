@@ -16,6 +16,7 @@ import threading
 import traceback
 import urllib.parse
 import tempfile
+import uuid
 from pathlib import Path
 
 import requests
@@ -23,7 +24,7 @@ import requests
 from build_epub import build_epub
 from build_pdf import build_pdf
 from cost_estimate import estimate_catalog, estimate_file, usd_from_usage
-from sources import find_adapter
+from sources import find_adapter, parse_saved_chapter_html
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 call_deepseek, translate_chapter,
@@ -225,6 +226,8 @@ STATE = {
     "stop_requested": False,  # dat truoc khi CURRENT_PROC ton tai van phai duoc ton trong
     "error_detail": "",       # traceback/duoi log day du de nguoi dung copy di fix
     "raw_file": "",           # file tho dang dung cho lan chay hien tai (de ro rang)
+    "crawl_only": False,
+    "crawled_chapters": 0,
     "translated_file": "",
     "cost_spent": 0.0,
     "cost_model": DEFAULT_MODEL,
@@ -351,7 +354,7 @@ def _worker_env():
     return env
 
 
-def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir=""):
+def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir="", crawl_only=False):
     title = title or guess_title(input_val)
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
@@ -359,20 +362,23 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
     args = _worker_command() + ["--title", title]
     if author:
         args += ["--author", author]
-    args += ["--model", model]
-    args += ["--reasoning-effort", reasoning_effort]
-    args += ["--workers", str(workers)]
-    args += ["--temperature", str(temperature)]
-    if allow_peak:
-        args += ["--allow-peak"]
-    if no_style_detect:
-        args += ["--no-style-detect"]
-    if no_thinking:
-        args += ["--no-thinking"]
-    if stream_mode:
-        args += ["--stream"]
-        if chapters > 0:
-            args += ["--chapters", str(chapters)]
+    if not crawl_only:
+        args += ["--model", model]
+        args += ["--reasoning-effort", reasoning_effort]
+        args += ["--workers", str(workers)]
+        args += ["--temperature", str(temperature)]
+        if allow_peak:
+            args += ["--allow-peak"]
+        if no_style_detect:
+            args += ["--no-style-detect"]
+        if no_thinking:
+            args += ["--no-thinking"]
+        if stream_mode:
+            args += ["--stream"]
+            if chapters > 0:
+                args += ["--chapters", str(chapters)]
+    else:
+        args += ["--crawl-only"]
 
     paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
     raw_file = str(paths["raw_path"])
@@ -409,9 +415,26 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
             cost_spent=0.0,
             cost_model=model,
             allow_peak=allow_peak,
+            crawl_only=crawl_only,
+            crawled_chapters=0,
         )
 
     try:
+        if crawl_only and not paths["is_url"]:
+            raw_path = Path(raw_file).resolve()
+            if raw_path.suffix.lower() != ".txt" or not raw_path.is_file() or not is_safe_path(raw_path, [UPLOAD_DIR]):
+                raise ValueError("File chi cao phai la TXT da nhap tu giao dien.")
+            from crawler import count_chapters
+            chapter_count = count_chapters(raw_file)
+            with LOCK:
+                STATE["running"] = False
+                STATE["step"] = "done"
+                STATE["crawled_chapters"] = chapter_count
+                STATE["log"] = f"Da nhap san {chapter_count} chuong tu file ban tho. Khong gui request den website.\n"
+                CURRENT_PROC = None
+            REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
+            return
+
         _termux_wake_lock()
         popen_kwargs = {}
         if os.name == "nt":
@@ -508,6 +531,12 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                 return
                 
             STATE["step"] = "done"
+            if crawl_only:
+                from crawler import count_chapters
+                STATE["crawled_chapters"] = count_chapters(raw_file)
+                REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
+                _termux_notify(f"Cao xong: {title}", f"Da luu {STATE['crawled_chapters']} chuong tho.")
+                return
             epub_display_path = epub_file if paths["has_custom_output"] else paths["epub_path"].name
             pdf_display_path = pdf_file if paths["has_custom_output"] else paths["pdf_path"].name
             exported = _export_to_android_storage(epub_file)
@@ -779,6 +808,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"error": "Khong tim thay"}, 404)
 
     def do_POST(self):
+        if self.path == "/import_html":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                if length <= 0 or length > 30 * 1024 * 1024:
+                    raise ValueError("Tong dung luong file HTML phai nho hon 30 MB.")
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Du lieu nhap HTML khong hop le.")
+                files = payload.get("files", [])
+                if not isinstance(files, list) or not files or len(files) > 300:
+                    raise ValueError("Chon tu 1 den 300 file HTML.")
+
+                chapters = []
+                for item in files:
+                    if not isinstance(item, dict) or not isinstance(item.get("html"), str):
+                        raise ValueError("Du lieu file HTML khong hop le.")
+                    name = sanitize_filename(item.get("name") or "saved-page.html")
+                    chapters.append(parse_saved_chapter_html(item["html"], source_name=name))
+
+                raw_text = "=== TRUYEN ===\n\n"
+                for chapter in chapters:
+                    raw_text += f"=== {chapter['title']} ===\n\n"
+                    raw_text += "\n\n".join(chapter["paragraphs"]) + "\n\n"
+                    raw_text += "=" * 40 + "\n\n"
+
+                filename = f"wa01-import-{uuid.uuid4().hex[:10]}.txt"
+                ok, save_path, err = safe_upload_file(UPLOAD_DIR, filename, raw_text.encode("utf-8"))
+                if ok and save_path:
+                    self._json({"success": True, "path": str(save_path), "chapters": len(chapters)})
+                else:
+                    self._json({"success": False, "message": err or "Khong the luu file"}, 500)
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                self._json({"success": False, "message": str(exc)}, 400)
+            return
+
         if self.path.startswith("/upload_raw"):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             filename = sanitize_filename(os.path.basename(qs.get("name", [""])[0]) or "cao_tay.txt")
@@ -882,6 +946,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         no_style_detect = "no_style_detect" in params
         no_thinking = "no_thinking" in params
         stream_mode = "stream_mode" in params
+        crawl_only = params.get("mode", [""])[0] == "crawl_only"
 
         try:
             chapters = int(params.get("chapters", ["0"])[0].strip())
@@ -889,6 +954,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             chapters = 0
 
         output_dir = params.get("output_dir", [""])[0].strip()
+        if crawl_only and not input_val.lower().startswith(("http://", "https://")):
+            candidate = Path(input_val).expanduser()
+            if not candidate.is_absolute():
+                candidate = (Path.cwd() / candidate).resolve()
+            if candidate.suffix.lower() != ".txt" or not candidate.is_file() or not is_safe_path(candidate, [UPLOAD_DIR]):
+                with LOCK:
+                    STATE["error"] = "Chi cao chuong can URL; voi trang bi chan, hay nhap HTML/MHTML da luu thanh file TXT truoc."
+                    STATE["step"] = "idle"
+                self._send(400)
+                return
         if output_dir:
             ok, resolved_dir, err = validate_output_dir(output_dir, create=True)
             if not ok or resolved_dir is None:
@@ -905,7 +980,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort, output_dir),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort, output_dir, crawl_only),
                 daemon=True
             ).start()
 

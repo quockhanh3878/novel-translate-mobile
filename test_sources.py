@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 import crawler
-from sources import UukanshuAdapter, find_adapter
+from sources import UukanshuAdapter, find_adapter, parse_saved_chapter_html
 
 
 BASE = Path(__file__).parent / "test_data" / "uukanshu"
@@ -58,6 +58,71 @@ def test_adapter_chapter_parser():
     assert len(second["paragraphs"]) > 20
     assert all("loadAdv" not in paragraph for paragraph in first["paragraphs"])
     assert all("loadAdv" not in paragraph for paragraph in second["paragraphs"])
+
+
+def test_saved_html_import_and_challenge_detection():
+    html = """
+    <html><head><title>Book</title></head><body>
+      <div class="title">Chapter 12</div>
+      <div class="content"><p>First paragraph with enough text.</p>
+      <p>Second paragraph.</p><div class="mobadsq">advertisement</div>
+      <a class="anchor_bookmark">bookmark</a></div>
+    </body></html>
+    """
+    chapter = parse_saved_chapter_html(html, "book_12.html")
+    assert chapter == {
+        "title": "Chapter 12",
+        "paragraphs": ["First paragraph with enough text.", "Second paragraph."],
+    }, chapter
+
+    mhtml = """MIME-Version: 1.0
+Content-Type: multipart/related; boundary="part"
+
+--part
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div class=3D"title">Chapter 13</div><div class=3D"content"><p>A saved MHTML chapter with enough text to import.</p></div>
+--part--
+"""
+    mhtml_chapter = parse_saved_chapter_html(mhtml, "book_13.mhtml")
+    assert mhtml_chapter["title"] == "Chapter 13"
+    assert mhtml_chapter["paragraphs"] == ["A saved MHTML chapter with enough text to import."]
+
+    try:
+        parse_saved_chapter_html(
+            '<html><body><div id="error">challenge_required</div></body></html>',
+            "blocked.html",
+        )
+    except ValueError as exc:
+        assert "xac minh" in str(exc)
+    else:
+        raise AssertionError("A saved challenge page must not be accepted as chapter content.")
+
+
+def test_wa01_http_block_stops_for_manual_import():
+    class FakeResponse:
+        status_code = 403
+
+    class FakeScraper:
+        def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    original_create_scraper = crawler.cloudscraper.create_scraper
+    crawler.cloudscraper.create_scraper = lambda **_: FakeScraper()
+    messages = []
+    try:
+        try:
+            crawler.crawl_chapter(
+                "https://www.wa01.com/novel/pagea/sample_1.html", log=messages.append,
+            )
+        except crawler.CrawlBlockedError as exc:
+            assert "HTTP 403" in str(exc)
+            assert "nhap file HTML" in str(exc)
+        else:
+            raise AssertionError("HTTP 403 must stop without retrying as a chapter parse failure.")
+    finally:
+        crawler.cloudscraper.create_scraper = original_create_scraper
 
 
 class StubAdapter:
@@ -215,10 +280,12 @@ def test_legacy_url_path():
 def main():
     test_adapter_selection_and_catalog()
     test_adapter_chapter_parser()
+    test_saved_html_import_and_challenge_detection()
+    test_wa01_http_block_stops_for_manual_import()
     test_resume_and_chapter_start()
     test_stream_limit_end_and_errors()
     test_legacy_url_path()
-    print("OK: uukanshu adapter and crawler routing tests passed.")
+    print("OK: source adapter, WA01 block handling, saved HTML import, and crawler routing tests passed.")
 
 
 if __name__ == "__main__":

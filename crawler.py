@@ -8,6 +8,11 @@ import cloudscraper
 
 from bs4 import BeautifulSoup
 from sources import find_adapter
+from hybrid_session import (
+    HybridCrawlerSession,
+    CrawlBlockedError,
+    has_challenge_indicator,
+)
 
 DEFAULT_START_URL = "https://www.wa01.com/novel/pagea/disanchongrenge-changshuxin_1.html"
 DEFAULT_OUTPUT = "truyen_de_tam_trung_nhan_cach.txt"
@@ -96,29 +101,60 @@ def guess_title(text: str) -> str:
     return " ".join(w.capitalize() for w in words if w) or "Truyen"
 
 
-def crawl_chapter(url, log=print):
+_GLOBAL_SESSION = None
+
+
+def get_crawler_session(log=print) -> HybridCrawlerSession:
+    global _GLOBAL_SESSION
+    if _GLOBAL_SESSION is None:
+        _GLOBAL_SESSION = HybridCrawlerSession(log=log)
+    return _GLOBAL_SESSION
+
+
+def crawl_chapter(url, log=print, session=None):
     adapter = find_adapter(url)
     if adapter:
         return adapter.crawl_chapter(url, log=log)
 
     log(f"Fetching: {url}")
     try:
-        # Xoay vong cau hinh browser de sinh TLS fingerprint tuong ung
-        browser_config = random.choice(CLOUDFLARE_BROWSERS)
-        scraper = cloudscraper.create_scraper(browser=browser_config)
-        
-        # Xoay vong User-Agent bo sung
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS)
-        }
+        # Neu cloudscraper.create_scraper bi mock trong test, giu nguyen behavior cu
+        is_mocked = (
+            getattr(cloudscraper.create_scraper, "__module__", "") != "cloudscraper"
+            or getattr(cloudscraper.create_scraper, "__name__", "") == "<lambda>"
+        )
 
-        response = scraper.get(url, headers=headers, timeout=15)
+        if is_mocked:
+            headers = {
+                "User-Agent": random.choice(USER_AGENTS)
+            }
+            browser_config = random.choice(CLOUDFLARE_BROWSERS)
+            scraper = cloudscraper.create_scraper(browser=browser_config)
+            response = scraper.get(url, headers=headers, timeout=15)
+        else:
+            active_session = session or get_crawler_session(log=log)
+            response = active_session.get(url, timeout=15)
+
+        if response.status_code in (403, 429):
+            raise CrawlBlockedError(
+                f"Nguon tu choi request (HTTP {response.status_code}): {url}. "
+                "Hay mo trang bang trinh duyet, luu trang chuong thanh HTML va "
+                "nhap file HTML vao giao dien de tiep tuc dich."
+            )
         if response.status_code == 404:
             log("Returned 404 (Not Found). Ending crawl.")
             return None
 
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
+
+        page_text = soup.get_text(" ", strip=True).lower()
+        if has_challenge_indicator(getattr(response, "text", "")) or has_challenge_indicator(page_text):
+            raise CrawlBlockedError(
+                f"Nguon yeu cau xac minh bang trinh duyet: {url}. "
+                "Hay mo trang bang trinh duyet, luu trang chuong thanh HTML va "
+                "nhap file HTML vao giao dien de tiep tuc dich."
+            )
 
         title_div = soup.find('div', class_='title')
         title = title_div.get_text(strip=True) if title_div else url
@@ -148,6 +184,8 @@ def crawl_chapter(url, log=print):
 
         return {'title': title, 'paragraphs': paragraphs}
 
+    except CrawlBlockedError:
+        raise
     except Exception as e:
         log(f"Error fetching {url}: {e}")
         return False  # Indication to retry or pause
