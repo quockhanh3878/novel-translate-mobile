@@ -28,7 +28,7 @@ const context = {
 context.postForm = (url, fields) => context.fetch(url, { body: new URLSearchParams(fields) });
 vm.createContext(context);
 vm.runInContext(source.slice(start, end), context);
-const api = vm.runInContext('({ refreshKeyBalance })', context);
+const api = vm.runInContext('({ refreshKeyBalance, formatUsd })', context);
 
 function reply(index, balance) {
     requests[index].resolve({
@@ -40,6 +40,9 @@ function reply(index, balance) {
 }
 
 async function main() {
+    assert.equal(api.formatUsd(0), '$0.00');
+    assert.equal(api.formatUsd(0.001), '< $0.01', 'A positive tiny estimate must not look free');
+    assert.equal(api.formatUsd(1.14), '$1.14');
     assert.equal(intervals.length, 1, 'Balance must refresh periodically');
     assert.equal(intervals[0].delay, 30000);
     assert.equal(typeof events.visibilitychange, 'function');

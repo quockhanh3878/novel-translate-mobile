@@ -108,6 +108,14 @@ pip install -r requirements.txt
 Ứng dụng hiện chạy qua DeepSeek API. `app.py` là entrypoint tương thích để mở
 Web GUI API-only; không cần đặt model ONNX cục bộ.
 
+Khi nhập link, giao diện tự lấy tên truyện và tác giả từ trang nguồn nếu có dữ liệu,
+chỉ điền các ô còn trống. Có thể sửa tên tiếng Việt và tác giả trước khi chạy.
+Thông tin gốc, thông tin đã sửa, nguồn và ngày cập nhật được lưu trong
+`<file dịch bỏ đuôi .txt>_book.json`; Resume dùng lại hồ sơ này.
+EPUB/PDF dùng ID sách ổn định và ghi số chương của bản xuất, ngôn ngữ, nguồn,
+model dịch (nếu đã biết), ngày tạo và cập nhật. Ngày xuất bản gốc chỉ được ghi
+khi trang nguồn cung cấp. File TXT không có hồ sơ vẫn cho phép nhập thông tin thủ công.
+
 Tạo file `.env` và điền API Key:
 ```env
 DEEPSEEK_API_KEY=your_deepseek_api_key_here

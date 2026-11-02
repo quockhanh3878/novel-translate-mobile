@@ -45,6 +45,8 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub, ensure_packaged
+from novel_metadata import run_metadata, prepare_profile
+from path_resolver import sanitize_filename
 from build_pdf import build_pdf
 from crawler import crawl_novel
 from deepseek_translate import load_dotenv, translate_novel, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
@@ -100,6 +102,12 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
         balance_empty_event.set()
 
     try:
+        metadata = run_metadata(raw_file, translated_file, start_url or "",
+                                cfg.get("title"), cfg.get("author"), model)
+        title, author = metadata["display_title"], metadata["author"]
+        epub_path = cfg.get("epub") or f"{sanitize_filename(title)}.epub"
+        pdf_path = cfg.get("pdf") or f"{sanitize_filename(title)}.pdf"
+        result_slot["title"] = title
         # Buoc 1: Cao truyen (neu co URL)
         log("=== Buoc 1/4: Cao truyen ===")
         if start_url:
@@ -145,6 +153,7 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
             result_slot["status"] = "stopped"
             return
 
+        prepare_profile(raw_file, translated_file)
         # Buoc 3: Validation
         log("=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
         warnings = validate_translation(raw_file, translated_file, log=log)

@@ -28,6 +28,7 @@ from deepseek_translate import (load_dotenv, load_glossary, save_glossary, trans
                                 glossary_path_for)
 from build_epub import build_epub, ensure_packaged
 from build_pdf import build_pdf
+from novel_metadata import run_metadata, prepare_profile
 
 BG_COLOR = "#1e1e1e"
 CARD_COLOR = "#2d2d2d"
@@ -127,6 +128,7 @@ class AppGUI(tk.Tk):
         self._last_auto_raw = DEFAULT_OUTPUT
         self._last_auto_translated = DEFAULT_OUTPUT + ".viet.txt"
         self._last_auto_title = "Đệ Tam Trùng Nhân Cách"
+        self._last_auto_author = "Thường Thư Hân"
         self.ent_url.bind("<FocusOut>", self._on_url_changed)
 
         ttk.Label(left, text="File truyện thô (đã cào):").pack(anchor="w", pady=2)
@@ -261,6 +263,9 @@ class AppGUI(tk.Tk):
             self.ent_title.delete(0, tk.END)
             self.ent_title.insert(0, guessed)
             self._last_auto_title = guessed
+        if self.ent_author.get().strip() == self._last_auto_author:
+            self.ent_author.delete(0, tk.END)
+            self._last_auto_author = ""
         self.reload_glossary_view()
 
     def log(self, message):
@@ -338,6 +343,12 @@ class AppGUI(tk.Tk):
     def run_pipeline(self, api_key, start_url, raw_file, translated_file, title, author, save_dir,
                       model, temperature, workers, thinking, style_detect, avoid_peak):
         try:
+            automatic_title = title == self._last_auto_title
+            metadata = run_metadata(raw_file, translated_file, start_url,
+                                    None if automatic_title else title,
+                                    None if author == self._last_auto_author else author, model)
+            title, author = metadata["display_title"], metadata["author"]
+            output_name = sanitize_filename(title)
             self.lbl_status.config(text="Bước 1/3: Đang cào truyện...")
             already_raw = count_chapters(raw_file)
             self.log(f"=== Bước 1/3: Cào truyện (đã có {already_raw} chương trong file thô) ===")
@@ -354,8 +365,8 @@ class AppGUI(tk.Tk):
             self.log(f"\n=== Bước 2/3: Dịch bằng DeepSeek API (đã dịch {already_vi} chương) ===")
             self.lbl_status.config(text="Bước 2/3: Đang dịch...")
             
-            epub_path = os.path.join(save_dir, f"{title}.epub")
-            pdf_path = os.path.join(save_dir, f"{title}.pdf")
+            epub_path = os.path.join(save_dir, f"{output_name}.epub")
+            pdf_path = os.path.join(save_dir, f"{output_name}.pdf")
             def _on_chapter_gui(idx, total, translated):
                 self.on_chapter_progress(idx, total, translated)
                 if not translated:
@@ -377,10 +388,11 @@ class AppGUI(tk.Tk):
                 self.log("[Đã dừng] Chạy lại để tiếp tục từ đây.")
                 return
 
+            prepare_profile(raw_file, translated_file)
             self.log("\n=== Bước 3/3: Đóng gói EPUB + PDF ===")
             self.lbl_status.config(text="Bước 3/3: Đang đóng gói EPUB + PDF...")
-            epub_path = os.path.join(save_dir, f"{title}.epub")
-            pdf_path = os.path.join(save_dir, f"{title}.pdf")
+            epub_path = os.path.join(save_dir, f"{output_name}.epub")
+            pdf_path = os.path.join(save_dir, f"{output_name}.pdf")
             pkg_res = ensure_packaged(translated_file, epub_path, pdf_path, title, author,
                                       build_epub_fn=build_epub, build_pdf_fn=build_pdf)
             if not pkg_res["epub_built"] and not pkg_res["pdf_built"]:

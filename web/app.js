@@ -119,7 +119,7 @@
             setKeyStatus('bad', 'Lỗi kết nối khi kiểm tra Key: ' + err.message);
         } finally {
             btnTestKey.disabled = false;
-            btnTestKey.textContent = 'Test Key';
+            btnTestKey.textContent = 'Kiểm tra key';
         }
     };
 
@@ -192,6 +192,7 @@
     // ---------- Chon file tho ----------
 
     const rawFileInput = $('raw_file_input');
+    $('btn-upload-raw').onclick = () => rawFileInput.click();
     const rawFileStatus = $('raw_file_status');
     const inputSource = $('input_source');
 
@@ -238,6 +239,7 @@
                 const detail = data.chapters ? `\u0110\u00e3 nh\u1eadp ${data.chapters} ch\u01b0\u01a1ng t\u1eeb HTML. ` : '';
                 setFileStatus('ok', detail + 'File d\u1eef li\u1ec7u: ' + data.path);
                 scheduleEstimate();
+                scheduleBookMetadata();
             } else {
                 setFileStatus('bad', data.message || 'L\u1ed7i t\u1ea3i file.');
             }
@@ -268,7 +270,8 @@
     let balanceSequence = 0;
 
     function formatUsd(value) {
-        return '$' + Number(value || 0).toFixed(2);
+        const amount = Number(value || 0);
+        return amount > 0 && amount < 0.01 ? '< $0.01' : '$' + amount.toFixed(2);
     }
 
     function hideEstimate() {
@@ -281,8 +284,18 @@
         return Number.isFinite(number) ? number.toFixed(2) + ' ' + currency : String(value || '-') + ' ' + currency;
     }
 
+    function updateBalanceUi(data) {
+        const button = typeof $ === 'function' ? $('btn-refresh-balance') : null;
+        const updated = typeof $ === 'function' ? $('balance-updated') : null;
+        if (button) button.disabled = Boolean(balanceRequest) || !apiKeyInput.value.trim();
+        if (updated) updated.textContent = data && data.available && data.received_at
+            ? 'Cập nhật lúc ' + new Date(data.received_at).toLocaleTimeString('vi-VN') + ' · Tự cập nhật mỗi 30 giây.'
+            : 'Tự cập nhật mỗi 30 giây khi trang đang mở.';
+    }
+
     function renderKeyBalance(data) {
         lastKeyBalance = data || null;
+        updateBalanceUi(data);
         if (!data) {
             estimateBalanceRow.hidden = true;
             return;
@@ -364,7 +377,7 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
             if (sequence === balanceSequence && apiKeyInput.value.trim() === requestedKey) {
-                renderKeyBalance(data);
+                renderKeyBalance({ ...data, received_at: Date.now() });
             }
         } catch (error) {
             if (error.name !== 'AbortError' && sequence === balanceSequence &&
@@ -372,13 +385,19 @@
                 renderKeyBalance({ available: false, reason: 'Lỗi kết nối khi lấy số dư: ' + error.message });
             }
         } finally {
-            if (sequence === balanceSequence) balanceRequest = null;
+            if (sequence === balanceSequence) {
+                balanceRequest = null;
+                updateBalanceUi(lastKeyBalance);
+            }
         }
     }
 
     function refreshVisibleBalance() {
         if (!document.hidden && apiKeyInput.value.trim()) refreshKeyBalance();
     }
+
+    const balanceRefreshButton = typeof $ === 'function' ? $('btn-refresh-balance') : null;
+    if (balanceRefreshButton) balanceRefreshButton.onclick = () => refreshKeyBalance();
 
     setInterval(refreshVisibleBalance, 30000);
     document.addEventListener('visibilitychange', refreshVisibleBalance);
@@ -418,6 +437,110 @@
     }
 
     inputSource.addEventListener('input', scheduleEstimate);
+    const bookMetadataStatus = $('book-metadata-status');
+    let bookMetadataTimer = null;
+    let bookMetadataRequest = null;
+    let bookMetadataSequence = 0;
+    let bookMetadataInput = '';
+    let autoBookFields = {};
+
+    function renderBookProfile(data) {
+        const panel = $('book-profile');
+        if (!panel) return;
+        panel.hidden = !data.available;
+        function date(value, fallback, withTime = true) {
+            if (!value) return fallback;
+            const parsed = new Date(value);
+            if (Number.isNaN(parsed.getTime())) return fallback;
+            const day = parsed.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            return withTime ? day + ' · ' + parsed.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : day;
+        }
+        let source = data.source_url || '';
+        try { source = new URL(source).hostname; } catch (_) { /* local file */ }
+        const fields = {
+            'book-original-title': data.original_title || 'Chưa có',
+            'book-original-author': data.original_author || 'Chưa có',
+            'book-source': source || 'File trên máy',
+            'book-publication-date': date(data.publication_date, 'Nguồn chưa cung cấp', false),
+            'book-export-created': date(data.export_created_at, 'Chưa tạo bản xuất'),
+            'book-export-updated': date(data.export_updated_at, 'Chưa tạo bản xuất'),
+            'book-exported-chapters': data.exported_chapters !== '' && data.exported_chapters != null
+                ? Number(data.exported_chapters).toLocaleString('vi-VN') + ' chương' : 'Chưa tạo bản xuất',
+            'book-model': data.translation_model || 'Chưa có dữ liệu',
+            'book-identifier': data.book_id || 'Được tạo khi bắt đầu chạy'
+        };
+        Object.entries(fields).forEach(([id, value]) => { const node = $(id); if (node) node.textContent = value; });
+    }
+
+    async function refreshBookMetadata() {
+        const input = inputSource.value.trim();
+        if (bookMetadataRequest) bookMetadataRequest.abort();
+        const sequence = ++bookMetadataSequence;
+        if (input !== bookMetadataInput) {
+            ['title', 'author'].forEach((name) => {
+                if (autoBookFields[name] && form.elements[name].value === autoBookFields[name]) {
+                    form.elements[name].value = '';
+                }
+            });
+            autoBookFields = {};
+            bookMetadataInput = input;
+        }
+        if (!input) {
+            bookMetadataStatus.textContent = '';
+            renderBookProfile({ available: false });
+            saveForm();
+            return;
+        }
+        bookMetadataRequest = new AbortController();
+        const before = { title: form.elements.title.value, author: form.elements.author.value };
+        bookMetadataStatus.textContent = 'Đang lấy thông tin truyện...';
+        const query = new URLSearchParams({ input, title: before.title,
+            output_dir: form.elements.output_dir.value.trim() });
+        try {
+            const response = await fetch('/book_metadata?' + query, { signal: bookMetadataRequest.signal });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const data = await response.json();
+            if (sequence !== bookMetadataSequence || inputSource.value.trim() !== input) return;
+            renderBookProfile(data);
+            ['title', 'author'].forEach((name) => {
+                const field = form.elements[name];
+                if (!before[name] && !field.value && data[name]) {
+                    field.value = data[name];
+                    autoBookFields[name] = data[name];
+                }
+            });
+            bookMetadataStatus.textContent = data.available
+                ? [data.original_title ? 'Tên gốc: ' + data.original_title : '',
+                    data.original_author ? 'Tác giả gốc: ' + data.original_author : '',
+                    'Anh có thể sửa tên truyện và tác giả trước khi chạy.'].filter(Boolean).join(' | ')
+                : (data.reason || 'Chưa có thông tin sách; có thể nhập thủ công.');
+            saveForm();
+            scheduleEstimate();
+        } catch (error) {
+            if (error.name !== 'AbortError' && sequence === bookMetadataSequence) {
+                bookMetadataStatus.textContent = 'Không lấy được thông tin sách; có thể nhập thủ công.';
+                renderBookProfile({ available: false });
+            }
+        }
+    }
+
+    function scheduleBookMetadata() {
+        if (bookMetadataTimer) clearTimeout(bookMetadataTimer);
+        // Invalidate an in-flight response immediately when the source changes.
+        bookMetadataSequence += 1;
+        if (bookMetadataRequest) bookMetadataRequest.abort();
+        renderBookProfile({ available: false });
+        bookMetadataTimer = setTimeout(refreshBookMetadata, 600);
+    }
+
+    inputSource.addEventListener('input', scheduleBookMetadata);
+    form.elements.output_dir.addEventListener('change', scheduleBookMetadata);
+    ['title', 'author'].forEach((name) => {
+        form.elements[name].addEventListener('input', () => {
+            delete autoBookFields[name];
+            saveForm();
+        });
+    });
     ['title', 'output_dir', 'model', 'reasoning_effort', 'no_thinking', 'allow_peak'].forEach((name) => {
         const field = form.elements[name];
         if (!field) return;
@@ -430,6 +553,7 @@
 
     function saveForm() {
         const data = {};
+        data.metadataAuto = autoBookFields;
         TEXT_FIELDS.forEach((n) => { data[n] = form.elements[n].value; });
         CHECK_FIELDS.forEach((n) => { data[n] = form.elements[n].checked; });
         storageSet(FORM_KEY, JSON.stringify(data));
@@ -441,6 +565,8 @@
         let data;
         try { data = JSON.parse(raw); } catch (e) { return; }
         if (!data || typeof data !== 'object') return;
+        autoBookFields = data.metadataAuto && typeof data.metadataAuto === 'object' ? data.metadataAuto : {};
+        bookMetadataInput = typeof data.input === 'string' ? data.input.trim() : '';
         TEXT_FIELDS.forEach((n) => {
             const field = form.elements[n];
             if (typeof data[n] !== 'string' || data[n] === '') return;
@@ -465,6 +591,15 @@
     }
 
     streamModeCheck.onchange = syncStreamRow;
+
+    function syncThinkingControls() {
+        const enabled = form.elements.no_thinking.checked;
+        form.elements.temperature.disabled = !enabled;
+        form.elements.reasoning_effort.disabled = enabled;
+        $('temperature-hint').textContent = enabled
+            ? 'Áp dụng cho chế độ không suy luận.' : 'Không áp dụng khi đang bật suy luận.';
+    }
+    form.elements.no_thinking.addEventListener('change', syncThinkingControls);
 
     // ---------- Chay / dung ----------
 
@@ -563,11 +698,12 @@
 
     function setStepLabels(isStream) {
         $('step-crawl').querySelector('.step-label').textContent = isStream ? 'Cào + Dịch' : 'Cào truyện';
-        $('step-translate').querySelector('.step-label').textContent = isStream ? 'Stream' : 'Dịch thuật';
+        $('step-translate').querySelector('.step-label').textContent = isStream ? 'Từng chương' : 'Dịch thuật';
     }
 
     function updateSteps(currentStep, isStream, crawlOnly) {
         setStepLabels(isStream);
+        $('step-done').querySelector('.step-label').textContent = currentStep === 'done' ? 'Hoàn tất' : 'Đóng gói';
         if (crawlOnly) {
             $('step-crawl').querySelector('.step-label').textContent = 'C\u00e0o ch\u01b0\u01a1ng';
             $('step-translate').querySelector('.step-label').textContent = 'B\u1ecf qua d\u1ecbch';
@@ -580,8 +716,8 @@
         }
 
         const stateToIdx = isStream
-            ? { streaming: 0, validating: 2, packaging: 2, done: 3 }
-            : { crawling: 0, translating: 1, validating: 2, packaging: 2, done: 3 };
+            ? { streaming: 0, validating: 2, packaging: 3, done: 3 }
+            : { crawling: 0, translating: 1, validating: 2, packaging: 3, done: 3 };
         const activeIdx = stateToIdx[currentStep];
         if (activeIdx === undefined) return;
 
@@ -687,6 +823,7 @@
             if (wasRunning && !s.running) {
                 loadLibrary();
                 refreshVisibleBalance();
+                scheduleBookMetadata();
             }
             wasRunning = s.running;
 
@@ -793,6 +930,7 @@
                             if (outputInput) outputInput.value = res.path;
                             saveForm();
                             scheduleEstimate();
+                            scheduleBookMetadata();
                             loadLibrary();
                         }
                     } catch (err) {
@@ -932,7 +1070,9 @@
     // ---------- Khoi dong ----------
 
     loadForm();
+    syncThinkingControls();
     scheduleEstimate();
+    scheduleBookMetadata();
     checkKey();
     loadInfo();
     loadLibrary();

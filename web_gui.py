@@ -31,6 +31,7 @@ from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS,
                                 is_peak_hour)
 from text_postprocess import postprocess
+from novel_metadata import run_metadata, preview_metadata
 from version import __version__
 from path_resolver import (sanitize_filename, validate_output_dir,
                            resolve_pipeline_paths, is_safe_path, safe_upload_file)
@@ -355,7 +356,23 @@ def _worker_env():
 
 
 def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir="", crawl_only=False):
-    title = title or guess_title(input_val)
+    # Resolve the raw/translation identity before applying an automatically found display title.
+    try:
+        paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
+        metadata = run_metadata(str(paths["raw_path"]), str(paths["translated_path"]),
+                                input_val if paths["is_url"] else "", title, author,
+                                None if crawl_only else model)
+    except (OSError, ValueError) as exc:
+        with LOCK:
+            STATE.update(running=False, metadata_pending=False, error=str(exc), error_detail=str(exc), step="idle")
+        return
+    with LOCK:
+        if STATE.get("metadata_pending") and STATE.get("stop_requested"):
+            STATE.update(running=False, metadata_pending=False, error="Stopped", step="idle")
+            return
+    title, author = metadata["display_title"], metadata["author"]
+    paths["epub_path"] = paths["output_dir"] / (sanitize_filename(title) + ".epub")
+    paths["pdf_path"] = paths["output_dir"] / (sanitize_filename(title) + ".pdf")
     # -u: khong buffer stdout cua tien trinh con - neu khong, print() trong
     # crawler.py/pipeline.py bi block-buffer (khong phai tty) nen log/tien do
     # tren GUI dung im (giong "treo") hang chuc chuong roi moi hien 1 luc.
@@ -380,7 +397,6 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
     else:
         args += ["--crawl-only"]
 
-    paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
     raw_file = str(paths["raw_path"])
     translated_file = str(paths["translated_path"])
     epub_file = str(paths["epub_path"])
@@ -397,6 +413,7 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
     with LOCK:
         STATE.update(
             running=True,
+            metadata_pending=False,
             log="",
             epub=None,
             pdf=None,
@@ -743,6 +760,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._json(self._estimate(query), 200)
             except Exception:
                 self._json({"available": False, "reason": "Không thể ước tính file này."}, 400)
+        elif path == "/book_metadata":
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            try:
+                value = query.get("input", [""])[0].strip()
+                data = preview_metadata(value, query.get("title", [""])[0],
+                                        query.get("output_dir", [""])[0]) if value else {"available": False}
+                self._json(data)
+            except (OSError, ValueError) as exc:
+                self._json({"available": False, "reason": str(exc)})
         elif path == "/get_key":
             self._json({"key": os.environ.get("DEEPSEEK_API_KEY", "")})
         elif path == "/info":
@@ -991,6 +1017,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         with LOCK:
             already_running = STATE["running"]
+            if not already_running and input_val:
+                # Reserve the job before metadata lookup can perform network I/O.
+                STATE.update(running=True, metadata_pending=True, stop_requested=False,
+                             error=None, error_detail="", step="crawling", current_chapter=0,
+                             total_chapters=0, log="Dang lay thong tin truyen...\n")
 
         if not already_running and input_val:
             threading.Thread(

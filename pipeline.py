@@ -45,6 +45,8 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 from build_epub import build_epub, ensure_packaged, is_package_up_to_date
+from novel_metadata import run_metadata, prepare_profile
+from path_resolver import resolve_pipeline_paths, sanitize_filename
 from build_pdf import build_pdf
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream, iter_chapters_from_file
 from sources import find_adapter
@@ -74,11 +76,11 @@ def main():
                          help="URL chuong 1 de cao (bo qua neu da co san --raw)")
     parser.add_argument("--crawl-only", action="store_true",
                          help="Chi cao va luu file tho, khong can API key va khong dich")
-    parser.add_argument("--raw", default=DEFAULT_OUTPUT, help="File luu noi dung tho da cao")
+    parser.add_argument("--raw", default=None, help="File tho; mac dinh theo URL, hoac file cu neu khong co URL")
     parser.add_argument("--translated", default=None,
                          help="File luu ban dich, mac dinh <raw>.viet.txt")
-    parser.add_argument("--title", required=True, help="Ten truyen (metadata + ten file EPUB/PDF)")
-    parser.add_argument("--author", default="Unknown")
+    parser.add_argument("--title", default=None, help="Ten truyen; bo trong de lay tu nguon/ho so da luu")
+    parser.add_argument("--author", default=None)
     parser.add_argument("--epub", default=None, help="Duong dan EPUB dau ra, mac dinh <title>.epub")
     parser.add_argument("--pdf", default=None, help="Duong dan PDF dau ra, mac dinh <title>.pdf")
     parser.add_argument("--glossary", default=None,
@@ -121,9 +123,16 @@ def main():
     if args.crawl_only and not args.start_url:
         parser.error("--crawl-only yeu cau --start-url")
 
+    if not args.raw:
+        args.raw = (str(resolve_pipeline_paths(args.start_url, title=args.title or "")["raw_path"])
+                    if args.start_url else DEFAULT_OUTPUT)
     translated_file = args.translated or f"{args.raw}.viet.txt"
-    epub_path = args.epub or f"{args.title}.epub"
-    pdf_path = args.pdf or f"{args.title}.pdf"
+    metadata = run_metadata(args.raw, translated_file, args.start_url or "",
+                            args.title, args.author, None if args.crawl_only else args.model)
+    args.title = metadata["display_title"]
+    args.author = metadata["author"]
+    epub_path = args.epub or f"{sanitize_filename(args.title)}.epub"
+    pdf_path = args.pdf or f"{sanitize_filename(args.title)}.pdf"
 
     # Tao thu muc cha neu chua co
     for fpath in (args.raw, translated_file, epub_path, pdf_path):
@@ -159,6 +168,7 @@ def main():
     if args.crawl_only:
         print("=== Buoc 1/1: Cao truyen (chi luu ban tho) ===")
         saved = crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
+        prepare_profile(args.raw, translated_file)
         print(f"Da cao va luu {saved} chuong vao: {args.raw}")
         return
 
@@ -290,6 +300,7 @@ def main():
                          should_stop=lambda: _stop_flag, on_chapter=_on_chapter_batch,
                          reasoning_effort=args.reasoning_effort, prepare=not args.no_prepare)
 
+    prepare_profile(args.raw, translated_file)
     print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
     warnings = validate_translation(args.raw, translated_file)
     if warnings:

@@ -20,10 +20,12 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfdoc import XMP
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
 from build_epub import _record_packaged_source, copy_to_downloads
 from crawler import is_novel_title_entry, parse_chapters
+from novel_metadata import export_metadata, describe_export
 
 
 FONT_CANDIDATES = (
@@ -168,6 +170,7 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         spaceAfter=9,
     )
 
+    metadata = export_metadata(input_file, title, author)
     story = [
         Spacer(1, 2.35 * inch),
         Paragraph(_paragraph_text(title), cover_title),
@@ -178,6 +181,7 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         Paragraph("Ban dich tieng Viet", cover_meta),
         PageBreak(),
     ]
+    story.insert(-1, Paragraph(_paragraph_text(describe_export(metadata)), cover_meta))
 
     for index, chapter in enumerate(chapters):
         if index:
@@ -195,9 +199,27 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         bottomMargin=0.7 * inch,
         title=title,
         author=author,
-        subject="Ban dich tieu thuyet tieng Viet",
+        subject=describe_export(metadata),
+        keywords=metadata["book_id"],
     )
-    document.build(story, onFirstPage=_draw_page_number, onLaterPages=_draw_page_number)
+    xmp = (f'<x:xmpmeta xmlns:x="adobe:ns:meta/">'
+           f'<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+           f'<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" '
+           f'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+           f'<dc:title><rdf:Alt><rdf:li xml:lang="x-default">{escape(title)}</rdf:li></rdf:Alt></dc:title>'
+           f'<dc:creator><rdf:Seq><rdf:li>{escape(author)}</rdf:li></rdf:Seq></dc:creator>'
+           f'<dc:language><rdf:Bag><rdf:li>vi</rdf:li></rdf:Bag></dc:language>'
+           f'<dc:source>{escape(metadata.get("source_url", ""))}</dc:source>'
+           f'<dc:identifier>{escape(metadata["book_id"])}</dc:identifier>'
+           f'<xmp:CreateDate>{metadata["export_created_at"]}</xmp:CreateDate>'
+           f'<xmp:ModifyDate>{metadata["export_updated_at"]}</xmp:ModifyDate>'
+           f'</rdf:Description></rdf:RDF></x:xmpmeta>').encode("utf-8")
+
+    def first_page(canvas, doc):
+        canvas._doc.Catalog.Metadata = XMP(creator=lambda _: xmp)
+        _draw_page_number(canvas, doc)
+
+    document.build(story, onFirstPage=first_page, onLaterPages=_draw_page_number)
     _record_packaged_source(input_file, output_file, title, author)
     try:
         copy_to_downloads(output_file)

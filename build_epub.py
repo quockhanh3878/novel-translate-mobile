@@ -16,12 +16,12 @@ Su dung:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
 import re
 import tempfile
-import time
 import zipfile
 from html import escape
 
@@ -29,6 +29,7 @@ from ebooklib import epub
 from PIL import Image, ImageDraw, ImageFont
 
 from crawler import is_novel_title_entry, parse_chapters
+from novel_metadata import export_metadata, describe_export, metadata_fingerprint
 
 EPUB_CSS = """
 body {
@@ -116,11 +117,19 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     if is_novel_title_entry(chapters, 0):
         chapters = chapters[1:]
 
+    metadata = export_metadata(input_file, title, author)
     book = epub.EpubBook()
-    book.set_identifier(f"novel-translation-{int(time.time())}")
+    book.set_identifier(metadata["book_id"])
     book.set_title(title)
     book.set_language("vi")
     book.add_author(author)
+    book.add_metadata("DC", "description", describe_export(metadata))
+    if metadata.get("source_url"):
+        book.add_metadata("DC", "source", metadata["source_url"])
+    if metadata.get("publication_date"):
+        book.add_metadata("DC", "date", metadata["publication_date"])
+    if metadata.get("genre"):
+        book.add_metadata("DC", "subject", metadata["genre"])
 
     out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
     os.makedirs(out_dir, exist_ok=True)
@@ -162,7 +171,8 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     book.add_item(epub.EpubNav())
     book.spine = ["nav"] + epub_chapters
 
-    epub.write_epub(output_file, book, {})
+    modified = datetime.fromisoformat(metadata["export_updated_at"].replace("Z", "+00:00"))
+    epub.write_epub(output_file, book, {"mtime": modified})
     _record_packaged_source(input_file, output_file, title, author)
     try:
         copy_to_downloads(output_file)
@@ -216,8 +226,9 @@ def _record_packaged_source(translated_file: str, package_path: str,
         pkg_stat = os.stat(package_path)
         if pkg_stat.st_mtime_ns < trans_stat.st_mtime_ns:
             os.utime(package_path, ns=(trans_stat.st_atime_ns, trans_stat.st_mtime_ns))
-        state = {"version": 1, "source": _file_signature(translated_file),
-                 "package": _file_signature(package_path), "title": title, "author": author}
+        state = {"version": 2, "source": _file_signature(translated_file),
+                 "package": _file_signature(package_path), "title": title, "author": author,
+                 "book_metadata": metadata_fingerprint(translated_file)}
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
                                          dir=os.path.dirname(state_path), suffix=".tmp") as output:
             temp_path = output.name
@@ -247,7 +258,7 @@ def is_package_up_to_date(translated_file: str, package_path: str,
 
         with open(os.path.abspath(package_path) + ".packaged.json", encoding="utf-8") as receipt:
             recorded = json.load(receipt)
-        if not isinstance(recorded, dict) or recorded.get("version") != 1:
+        if not isinstance(recorded, dict) or recorded.get("version") != 2:
             return False
         if (recorded.get("source") != _file_signature(translated_file)
                 or recorded.get("package") != _file_signature(package_path)):
@@ -255,6 +266,8 @@ def is_package_up_to_date(translated_file: str, package_path: str,
         if title is not None and recorded.get("title") != title:
             return False
         if author is not None and recorded.get("author") != author:
+            return False
+        if recorded.get("book_metadata") != metadata_fingerprint(translated_file):
             return False
         return _valid_package(package_path)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile):

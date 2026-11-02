@@ -12,18 +12,22 @@
 </head>
 <body>
     <main class="container" id="app">
-        <h1>Dịch truyện Novel</h1>
-        <p class="subtitle">
-            Cào truyện Trung Quốc, dịch bằng DeepSeek API và đóng gói thành EPUB + PDF
-            <strong>Glossary riêng từng truyện, từ điển thành ngữ thuần Việt, tự tiếp tục khi bị ngắt</strong>
-        </p>
+        <header class="app-header">
+            <p class="eyebrow">NOVEL TRANSLATOR · LOCAL WEB</p>
+            <h1>Dịch truyện và xuất EPUB/PDF</h1>
+            <p class="subtitle">Lấy chương, dịch bằng DeepSeek và xuất EPUB/PDF. Thông tin sách, từ điển và tiến độ được lưu riêng cho từng truyện.</p>
+            <div class="feature-labels" aria-label="Tính năng chính">
+                <span>Tự lấy tên và tác giả</span><span>Tiếp tục khi bị ngắt</span><span>EPUB và PDF có metadata</span>
+            </div>
+        </header>
 
         <div id="key-warning" class="result-box error key-warning" role="alert" hidden>
-            <strong>Thiếu DEEPSEEK_API_KEY.</strong>
+            <strong>Chưa lưu DeepSeek API Key.</strong>
             Cần API Key để dịch. Chế độ <strong>Chỉ cào chương</strong> không cần API Key.
         </div>
 
         <section class="card" aria-labelledby="key-label">
+            <div class="section-heading"><h2>Kết nối DeepSeek</h2><span class="section-note">Chỉ cào chương không cần key</span></div>
             <label id="key-label" for="api_key_input">DeepSeek API Key (sk-...)</label>
             <form class="key-row" id="key-form" autocomplete="off">
                 <div class="key-field">
@@ -32,7 +36,7 @@
                 </div>
                 <div class="key-actions">
                     <button type="button" class="btn-small primary" id="btn-save-key">Lưu Key</button>
-                    <button type="button" class="btn-small" id="btn-test-key">Test Key</button>
+                    <button type="button" class="btn-small" id="btn-test-key">Kiểm tra key</button>
                     <button type="button" class="btn-small accent" id="btn-test-translate">Dịch thử</button>
                 </div>
             </form>
@@ -40,88 +44,113 @@
                 <div class="key-status" id="key-status" role="status">Đang kiểm tra API Key...</div>
                 <button type="button" class="console-btn" id="btn-copy-key-error" hidden>Copy lỗi</button>
             </div>
+            <p class="hint">Đổi key xong, bấm Lưu Key để dùng cho lần dịch tiếp theo. Kiểm tra key và dịch thử đều gọi DeepSeek API.</p>
+            <div class="cost-estimate-balance" id="estimate-balance-row" hidden>
+                <div class="balance-main"><span class="cost-label">Số dư key đang nhập</span><strong id="estimate-balance">-</strong></div>
+                <button type="button" class="btn-small" id="btn-refresh-balance">Cập nhật số dư</button>
+                <span class="cost-estimate-balance-detail" id="estimate-balance-detail"></span>
+                <span class="hint" id="balance-updated">Tự cập nhật mỗi 30 giây khi trang đang mở.</span>
+            </div>
         </section>
 
         <form id="f">
+            <section class="form-section" aria-labelledby="source-section-title">
+            <div class="section-heading"><h2 id="source-section-title"><span class="section-number">01</span> Chọn nguồn truyện</h2></div>
             <label for="input_source">Nguồn truyện</label>
             <input name="input" id="input_source" placeholder="Link mục lục / chương 1 hoặc đường dẫn file .txt thô" aria-describedby="source-hint" required>
             <p class="hint source-hint" id="source-hint">Hỗ trợ link mục lục hoặc chương 1: uukanshu.cc, 69shuba.com, bgq99.cc, shubaow.net, biquge.tw, tianyabooks.com, wa01.com (hoặc file .txt/.html/.mhtml đã lưu).</p>
             <div class="file-upload-row">
-                <label for="raw_file_input">Chọn TXT đã cào hoặc HTML/MHTML chương đã lưu từ trình duyệt...</label>
+                <button type="button" class="btn-small" id="btn-upload-raw">Chọn file TXT hoặc HTML/MHTML</button>
                 <input type="file" id="raw_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
+                <span class="hint">Nhập file đã có để tiếp tục, không cần cào lại.</span>
                 <div class="file-status" id="raw_file_status" role="status" hidden></div>
             </div>
+            </section>
 
+            <section class="form-section" aria-labelledby="book-section-title">
+                <div class="section-heading"><h2 id="book-section-title"><span class="section-number">02</span> Thông tin sách</h2></div>
+                <p class="hint metadata-status" id="book-metadata-status" role="status" aria-live="polite">Nhập nguồn để lấy thông tin sách. Có thể sửa tên tiếng Việt trước khi chạy.</p>
+                <div class="book-fields">
+                    <div><label for="title_input">Tên truyện hiển thị</label><input name="title" id="title_input" placeholder="Tự lấy từ nguồn hoặc nhập tên tiếng Việt"></div>
+                    <div><label for="author_input">Tác giả</label><input name="author" id="author_input" placeholder="Tự lấy từ nguồn, có thể sửa"></div>
+                </div>
+                <details class="book-profile" id="book-profile" hidden>
+                    <summary>Thông tin gốc và bản xuất đã lưu</summary>
+                    <dl class="metadata-grid">
+                        <div><dt>Tên gốc</dt><dd id="book-original-title">Chưa có</dd></div>
+                        <div><dt>Tác giả gốc</dt><dd id="book-original-author">Chưa có</dd></div>
+                        <div><dt>Nguồn</dt><dd id="book-source">Chưa có</dd></div>
+                        <div><dt>Ngày xuất bản gốc</dt><dd id="book-publication-date">Nguồn chưa cung cấp</dd></div>
+                        <div><dt>Tạo bản xuất lần đầu</dt><dd id="book-export-created">Chưa tạo bản xuất</dd></div>
+                        <div><dt>Cập nhật bản xuất</dt><dd id="book-export-updated">Chưa tạo bản xuất</dd></div>
+                        <div><dt>Số chương đã xuất</dt><dd id="book-exported-chapters">Chưa tạo bản xuất</dd></div>
+                        <div><dt>Cấu hình model đã lưu</dt><dd id="book-model">Chưa có dữ liệu</dd></div>
+                        <div class="metadata-wide"><dt>ID sách ổn định</dt><dd id="book-identifier">Được tạo khi bắt đầu chạy</dd></div>
+                    </dl>
+                </details>
+                <p class="hint">Tên và tác giả được ghi vào bìa, metadata EPUB/PDF. Sửa tên không làm mất tiến độ dịch; ngày xuất bản gốc chỉ ghi khi nguồn cung cấp.</p>
+                <label for="output_dir_input">Nơi lưu kết quả <span class="label-hint">(để trống: thư mục dữ liệu mặc định)</span></label>
+                <div class="dir-row">
+                    <input name="output_dir" id="output_dir_input" placeholder="Ví dụ: D:\Truyen_Dich" spellcheck="false">
+                    <button type="button" class="btn-small" id="btn-pick-dir" hidden>Chọn thư mục</button>
+                </div>
+                <p class="hint">Bản dịch, hồ sơ sách, EPUB và PDF được lưu tại đây. Nếu nhập URL, file thô cũng lưu cùng thư mục.</p>
+            </section>
+
+            <section class="form-section" aria-labelledby="scope-section-title">
+                <div class="section-heading"><h2 id="scope-section-title"><span class="section-number">03</span> Phạm vi dịch</h2></div>
+                <p class="hint">Mặc định dịch dữ liệu đã cào, chuẩn bị tên riêng và thành ngữ trước khi dịch. Các chương đã hoàn thành được bỏ qua khi chạy tiếp.</p>
+                <div class="stream-box">
+                    <div class="checkbox-group"><input type="checkbox" name="stream_mode" id="stream_mode"><label for="stream_mode">Chỉ dịch thêm một số chương mới</label></div>
+                    <p class="hint">Dịch ngay từng chương, bỏ qua bước chuẩn bị từ điển toàn truyện. Tên và thành ngữ được bổ sung dần.</p>
+                    <div class="stream-limit" id="stream-chapters-row" hidden>
+                        <label for="chapters_input">Số chương mới:</label>
+                        <input type="number" name="chapters" id="chapters_input" min="0" max="9999" value="20">
+                        <span class="hint">0 = đến hết dữ liệu</span>
+                    </div>
+                </div>
+            </section>
             <section class="cost-estimate" id="cost-estimate" aria-labelledby="cost-estimate-title" hidden>
-                <h2 id="cost-estimate-title">Ước tính chi phí dịch toàn bộ</h2>
+                <h2 id="cost-estimate-title">Ước tính cho toàn bộ dữ liệu nguồn</h2>
+                <p class="hint">Đây là khoảng tham khảo, chưa phải số tiền đã tiêu. Bật giới hạn chương không đổi phạm vi của bảng này.</p>
                 <div class="cost-estimate-grid">
                     <div><span class="cost-label">Đã cào</span><strong id="estimate-crawled">-</strong></div>
                     <div><span class="cost-label">Tổng số chương</span><strong id="estimate-chapters">-</strong></div>
                     <div><span class="cost-label">Số ký tự nguồn</span><strong id="estimate-chars">-</strong></div>
                     <div class="cost-estimate-price"><span class="cost-label">Khoảng tiền</span><strong id="estimate-total">-</strong></div>
                 </div>
-                <div class="cost-estimate-balance" id="estimate-balance-row" hidden>
-                    <span class="cost-label">Số dư API Key hiện có</span>
-                    <strong id="estimate-balance">-</strong>
-                    <span class="cost-estimate-balance-detail" id="estimate-balance-detail"></span>
-                </div>
                 <p class="cost-estimate-remaining" id="estimate-remaining" hidden></p>
                 <ul class="cost-estimate-warnings" id="estimate-warnings"></ul>
             </section>
 
-            <label for="title_input">Tên truyện <span class="label-hint">(để trống sẽ tự đoán từ URL)</span></label>
-            <input name="title" id="title_input" placeholder="Ví dụ: Đệ Tam Trùng Nhân Cách">
-
-            <label for="output_dir_input">Nơi lưu kết quả <span class="label-hint">(để trống: dùng thư mục dữ liệu mặc định)</span></label>
-            <div class="dir-row">
-                <input name="output_dir" id="output_dir_input" placeholder="Ví dụ: D:\Truyen_Dich (để trống: dùng mặc định)" spellcheck="false">
-                <button type="button" class="btn-small" id="btn-pick-dir" hidden>Chọn thư mục</button>
-            </div>
-            <p class="hint" style="margin-top:-10px;margin-bottom:14px">Bản dịch .viet.txt, EPUB và PDF sẽ lưu tại đây. Nếu nhập link URL, cả file thô cũng lưu vào đây.</p>
-
-            <details>
+            <details id="advanced-settings">
                 <summary>Cấu hình nâng cao</summary>
                 <div class="details-body">
                     <div class="advanced-grid">
                         <div>
-                            <label for="author_input">Tác giả</label>
-                            <input name="author" id="author_input" placeholder="Ví dụ: Thường Thư Hân">
-                        </div>
-                        <div>
                             <label for="model_select">Model dịch</label>
                             <select name="model" id="model_select">
-                                <option value="deepseek-flash">deepseek-flash (khuyên dùng)</option>
-                                <option value="deepseek-v4-pro">deepseek-v4-pro (đắt hơn ~3 lần)</option>
+                                <option value="deepseek-flash">DeepSeek Flash · mặc định</option>
+                                <option value="deepseek-v4-pro">DeepSeek Pro</option>
                             </select>
                         </div>
                         <div>
                             <label for="effort_select">Mức suy luận</label>
                             <select name="reasoning_effort" id="effort_select">
-                                <option value="medium" selected>Trung bình (khuyên dùng)</option>
-                                <option value="low">Thấp (rẻ hơn ~15%, thành ngữ kém hơn)</option>
+                                <option value="medium" selected>Cao · mặc định</option>
+                                <option value="low">Thấp</option>
                                 <option value="max">Tối đa (chậm, đắt)</option>
                             </select>
                         </div>
                         <div>
                             <label for="workers_input">Số luồng dịch song song</label>
                             <input type="number" name="workers" id="workers_input" min="1" max="10" value="1">
+                            <p class="hint">1 luồng giúp đồng bộ tên mới giữa các chương. Nhiều luồng có thể làm tên riêng kém nhất quán.</p>
                         </div>
                         <div>
-                            <label for="temperature_input">Độ sáng tạo (Temperature)</label>
+                            <label for="temperature_input">Temperature khi tắt suy luận</label>
                             <input type="number" name="temperature" id="temperature_input" step="0.1" min="0" max="2" value="1.3">
-                        </div>
-
-                        <div class="col-span-2 stream-box">
-                            <div class="checkbox-group">
-                                <input type="checkbox" name="stream_mode" id="stream_mode">
-                                <label for="stream_mode">Dịch theo số chương chưa dịch</label>
-                            </div>
-                            <p class="hint">Quét từ chương 1, bỏ qua chương đã dịch và dừng khi đủ số chương mới.</p>
-                            <div class="stream-limit" id="stream-chapters-row" hidden>
-                                <label for="chapters_input">Số chương cần dịch thêm:</label>
-                                <input type="number" name="chapters" id="chapters_input" min="0" max="9999" value="20">
-                                <span class="hint">(0 = đến hết)</span>
-                            </div>
+                            <p class="hint" id="temperature-hint">Không áp dụng khi đang bật suy luận.</p>
                         </div>
 
                         <div class="col-span-2">
@@ -135,7 +164,7 @@
                             </div>
                             <div class="checkbox-group">
                                 <input type="checkbox" name="no_thinking" id="no_thinking">
-                                <label for="no_thinking">Tắt Thinking Mode (không khuyến khích: thành ngữ sai nghĩa, sót chữ Hán)</label>
+                                <label for="no_thinking">Tắt suy luận (chất lượng có thể giảm; nên dịch thử trước)</label>
                             </div>
                         </div>
                     </div>
@@ -177,11 +206,13 @@
             </div>
         </form>
 
+        <section class="run-section" aria-labelledby="run-title">
+        <div class="section-heading"><h2 id="run-title">Tiến trình và kết quả</h2><span class="section-note">Có thể dừng và chạy tiếp</span></div>
         <ol class="steps" id="step-indicator" aria-label="Các bước xử lý">
             <li class="step" id="step-crawl"><span class="step-dot">1</span><span class="step-label">Cào truyện</span></li>
             <li class="step" id="step-translate"><span class="step-dot">2</span><span class="step-label">Dịch thuật</span></li>
             <li class="step" id="step-validate"><span class="step-dot">3</span><span class="step-label">Kiểm tra</span></li>
-            <li class="step" id="step-done"><span class="step-dot">4</span><span class="step-label">Hoàn tất</span></li>
+            <li class="step" id="step-done"><span class="step-dot">4</span><span class="step-label">Đóng gói</span></li>
         </ol>
 
         <div class="progress-container" id="progress-area" role="status" aria-live="polite" hidden>
@@ -214,12 +245,14 @@
             </div>
         </div>
         <pre id="log" aria-label="Nhật ký chạy"></pre>
+        </section>
 
         <section class="library" aria-labelledby="library-title">
             <div class="library-head">
                 <h2 id="library-title">Truyện đã dịch</h2>
                 <button type="button" class="console-btn" id="btn-refresh-library">Làm mới</button>
             </div>
+            <p class="hint library-hint">Tải EPUB để đọc bằng ứng dụng sách hoặc PDF để xem và in. File được tạo lại khi bản dịch hoặc metadata thay đổi.</p>
             <ul class="library-list" id="library-list"></ul>
         </section>
 

@@ -66,6 +66,9 @@ def demo():
             f.write(SAMPLE_VI)
         assert count_translated_chapters(vi_path) == 1
         assert count_translated_chapters(os.path.join(d, "missing.txt")) == 0
+        from novel_metadata import prepare_profile
+        from deepseek_translate import DEFAULT_MODEL
+        prepare_profile(zh_path, vi_path, model=DEFAULT_MODEL)
 
         ch_epub = parse_chapters_epub(vi_path)
         assert len(ch_epub) == 1
