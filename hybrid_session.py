@@ -6,11 +6,14 @@ Designed for novel-translate-mobile to support both Desktop and Termux.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 import random
+import re
 import time
 from typing import Callable, Optional
+from urllib.parse import urljoin, urlsplit
 
 # Detection flags for optional dependencies (loaded via importlib to avoid static missing-import warnings)
 try:
@@ -77,6 +80,57 @@ def is_challenge_response(status_code: int, html_text: str) -> bool:
     return has_challenge_indicator(html_text)
 
 
+_GK_CHALLENGE_ID_RE = re.compile(r'challengeId\s*:\s*"([^"]+)"')
+_GK_TICKET_RE = re.compile(r'ticket\s*:\s*"([^"]+)"')
+_GK_VERIFY_URL_RE = re.compile(r'verifyUrl\s*:\s*"([^"]+)"')
+_GK_DIFFICULTY_RE = re.compile(r'difficultyBits\s*:\s*(\d+)')
+
+
+def parse_gatekeeper_challenge(html_text: str) -> Optional[dict]:
+    """Extract Gatekeeper Proof-of-Work challenge config from a 403 HTML page."""
+    if not html_text or "gatekeeperChallenge" not in html_text:
+        return None
+    cid_m = _GK_CHALLENGE_ID_RE.search(html_text)
+    ticket_m = _GK_TICKET_RE.search(html_text)
+    if not cid_m or not ticket_m:
+        return None
+    verify_m = _GK_VERIFY_URL_RE.search(html_text)
+    diff_m = _GK_DIFFICULTY_RE.search(html_text)
+    difficulty = int(diff_m.group(1)) if diff_m else 12
+    return {
+        "challenge_id": cid_m.group(1),
+        "ticket": ticket_m.group(1),
+        "verify_url": verify_m.group(1) if verify_m else "/__gatekeeper_challenge/verify",
+        "difficulty_bits": max(1, min(difficulty, 24)),
+    }
+
+
+def _leading_zero_bits(digest: bytes) -> int:
+    n = 0
+    for b in digest:
+        if b == 0:
+            n += 8
+        else:
+            n += 8 - b.bit_length()
+            break
+    return n
+
+
+def solve_gatekeeper_pow(
+    challenge_id: str,
+    difficulty_bits: int,
+    max_iterations: int = 2_000_000,
+) -> Optional[str]:
+    """Find a decimal nonce where SHA256('gatekeeper-pow-v1:' + challenge_id + ':' + nonce)
+    starts with at least `difficulty_bits` zero bits."""
+    prefix = f"gatekeeper-pow-v1:{challenge_id}:".encode("utf-8")
+    for nonce in range(max_iterations):
+        digest = hashlib.sha256(prefix + str(nonce).encode("ascii")).digest()
+        if _leading_zero_bits(digest) >= difficulty_bits:
+            return str(nonce)
+    return None
+
+
 class HybridCrawlerSession:
     """Manages HTTP requests with TLS impersonation, cookie persistence, and browser fallback."""
 
@@ -132,6 +186,14 @@ class HybridCrawlerSession:
 
                 if is_challenge_response(status_code, text):
                     self.log(f"Phat hien co che chan bot ({status_code}) tai {url}.")
+                    if self._solve_gatekeeper_challenge(url, text, merged_headers, timeout):
+                        self.log("Da giai ma Gatekeeper PoW thanh cong, thu lai request...")
+                        response = self._session.get(url, headers=merged_headers, timeout=timeout)
+                        status_code = getattr(response, "status_code", 200)
+                        text = getattr(response, "text", "")
+                        if not is_challenge_response(status_code, text):
+                            return response
+
                     if self.enable_browser_fallback and HAS_PLAYWRIGHT:
                         solved = self._harvest_and_sync_cookies(url)
                         if solved:
@@ -160,6 +222,38 @@ class HybridCrawlerSession:
                     current_delay *= 2
                 else:
                     raise exc
+
+    def _solve_gatekeeper_challenge(
+        self, url: str, html_text: str, headers: dict, timeout: int = 15
+    ) -> bool:
+        """Solve built-in Gatekeeper SHA-256 Proof-of-Work challenge in pure Python."""
+        cfg = parse_gatekeeper_challenge(html_text)
+        if not cfg:
+            return False
+        nonce = solve_gatekeeper_pow(cfg["challenge_id"], cfg["difficulty_bits"])
+        if nonce is None:
+            return False
+        verify_url = urljoin(url, cfg["verify_url"])
+        parsed = urlsplit(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+        post_headers = dict(headers or {})
+        post_headers["Content-Type"] = "application/json"
+        if origin:
+            post_headers["Origin"] = origin
+        payload = {
+            "challenge_id": cfg["challenge_id"],
+            "ticket": cfg["ticket"],
+            "nonce": nonce,
+        }
+        try:
+            resp = self._session.post(verify_url, headers=post_headers, json=payload, timeout=timeout)
+            if getattr(resp, "status_code", 0) == 200:
+                data = resp.json()
+                if isinstance(data, dict) and data.get("status") == "passed":
+                    return True
+        except Exception as exc:
+            self.log(f"Khong the xac minh Gatekeeper PoW: {exc}")
+        return False
 
     def _harvest_and_sync_cookies(self, url: str) -> bool:
         """Run headless browser to solve challenge and synchronize cookies back to fast session."""

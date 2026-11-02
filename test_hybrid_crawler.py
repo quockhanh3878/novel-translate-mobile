@@ -186,6 +186,56 @@ def test_uukanshu_adapter_uses_hybrid_session():
     assert isinstance(adapter.session, HybridCrawlerSession)
 
 
+def test_gatekeeper_pow_solver_and_session_bypass():
+    """Verify Gatekeeper SHA-256 Proof-of-Work challenge is parsed, solved, and verified without Playwright."""
+    import hashlib
+    from hybrid_session import (
+        _leading_zero_bits,
+        parse_gatekeeper_challenge,
+        solve_gatekeeper_pow,
+    )
+
+    sample_html = (
+        '<script>(function(){var g=window.gatekeeperChallenge;'
+        'g.start({challengeId:"abc123def456",ticket:"tok_xyz",'
+        'verifyUrl:"/__gatekeeper_challenge/verify",difficultyBits:8});})();</script>'
+    )
+    cfg = parse_gatekeeper_challenge(sample_html)
+    assert cfg == {
+        "challenge_id": "abc123def456",
+        "ticket": "tok_xyz",
+        "verify_url": "/__gatekeeper_challenge/verify",
+        "difficulty_bits": 8,
+    }, cfg
+
+    nonce = solve_gatekeeper_pow("abc123def456", 8)
+    assert nonce is not None
+    digest = hashlib.sha256(f"gatekeeper-pow-v1:abc123def456:{nonce}".encode("utf-8")).digest()
+    assert _leading_zero_bits(digest) >= 8
+
+    logs = []
+    session = HybridCrawlerSession(enable_browser_fallback=False, log=logs.append)
+    challenge_resp = MagicMock(status_code=403, text=sample_html)
+    verify_resp = MagicMock(status_code=200)
+    verify_resp.json.return_value = {"status": "passed", "mode": "navigate"}
+    ok_resp = MagicMock(status_code=200, text="<html><div class='title'>Ch 1</div></html>")
+
+    session._session.get = MagicMock(side_effect=[challenge_resp, ok_resp])
+    session._session.post = MagicMock(return_value=verify_resp)
+
+    resp = session.get("https://www.wa01.com/novel/pagea/qingshan-huishuohuadezhouzi_1.html")
+    assert resp.status_code == 200
+    session._session.post.assert_called_once()
+    call_args, call_kwargs = session._session.post.call_args
+    assert call_args[0] == "https://www.wa01.com/__gatekeeper_challenge/verify"
+    assert call_kwargs["headers"].get("Origin") == "https://www.wa01.com"
+    assert call_kwargs["json"] == {
+        "challenge_id": "abc123def456",
+        "ticket": "tok_xyz",
+        "nonce": nonce,
+    }
+
+
 def main():
     test_ac1_engine_initialization_and_fallback()
     test_ac2_cookie_persistence_and_sync()
@@ -195,6 +245,7 @@ def main():
     test_ac3_challenge_blocked_when_fallback_unavailable()
     test_crawler_integration_and_user_agent_consistency()
     test_uukanshu_adapter_uses_hybrid_session()
+    test_gatekeeper_pow_solver_and_session_bypass()
     print("OK: all hybrid crawler session and integration tests passed.")
 
 
