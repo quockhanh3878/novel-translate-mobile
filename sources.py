@@ -888,13 +888,20 @@ class BiqugeTwAdapter(Shuba69Adapter):
         return paragraphs
 
     def _find_next_page_url(self, soup: BeautifulSoup, current_url: str, book_id: str, chapter_id: str):
-        pattern = re.compile(rf"^/book/{re.escape(book_id)}/{re.escape(chapter_id)}_\d+\.html?$")
+        pattern = re.compile(rf"^/book/{re.escape(book_id)}/{re.escape(chapter_id)}_(\d+)\.html?$")
+        current_match = pattern.fullmatch(urlsplit(current_url).path.rstrip("/"))
+        current_page = int(current_match.group(1)) if current_match else 1
+        candidates = []
         for link in soup.select("div.read-page a[href], a[rel='next'][href]"):
             href = urljoin(current_url, link.get("href", "").strip())
             path = urlsplit(href).path.rstrip("/")
-            if pattern.fullmatch(path):
-                return f"{self._canonical_base(current_url)}{path}"
-        return None
+            match = pattern.fullmatch(path)
+            if match and int(match.group(1)) > current_page:
+                priority = 0 if "next" in link.get("rel", []) else 1
+                candidates.append((priority, int(match.group(1)), path))
+        if not candidates:
+            return None
+        return f"{self._canonical_base(current_url)}{min(candidates)[2]}"
 
     def crawl_chapter(self, url: str, log=print):
         chapter_ref = self._chapter_id(url)
@@ -940,6 +947,10 @@ class BiqugeTwAdapter(Shuba69Adapter):
             paragraphs.extend(self._extract_paragraphs(content_node, title))
             current_referer = current_url
             current_url = next_url
+
+        if current_url:
+            log(f"Incomplete paginated chapter at {current_url}; retry instead of saving partial content.")
+            return False
 
         if not paragraphs:
             log(f"Empty chapter content in div#chaptercontent for {canonical_url}. Stop.")

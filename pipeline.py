@@ -137,7 +137,8 @@ def main():
         from crawler import count_chapters as _count_vi
         existing_count = _count_vi(translated_file)
         if existing_count > 0:
-            if is_package_up_to_date(translated_file, epub_path) and is_package_up_to_date(translated_file, pdf_path):
+            if (is_package_up_to_date(translated_file, epub_path, args.title, args.author)
+                    and is_package_up_to_date(translated_file, pdf_path, args.title, args.author)):
                 print(f"[EPUB/PDF] Da co san file dong goi cho {existing_count} chuong: {epub_path} va {pdf_path}, bo qua dong goi trung.")
             else:
                 print(f"[EPUB/PDF] Phat hien {existing_count} chuong da dich co san, dang dong goi nguon...")

@@ -9,6 +9,7 @@ model/
 *.zip
 # Du lieu rieng moi truyen (glossary, thanh ngu, chuan bi) nam canh file dich: <file dich>_*.json
 *.viet_*.json
+*.packaged.json
 
 # Exclude Old backup directory
 Old/

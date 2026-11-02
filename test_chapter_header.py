@@ -150,7 +150,7 @@ def demo_stream():
         deepseek_translate.translate_chapter = fake_translate
         try:
             deepseek_translate.translate_novel_stream(
-                generator, out, None, "fake-api-key", log=lambda message: None)
+                generator, out, None, "fake-api-key", avoid_peak=False, log=lambda message: None)
         finally:
             deepseek_translate.translate_chapter = original
         return indexes

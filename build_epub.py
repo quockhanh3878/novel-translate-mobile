@@ -16,7 +16,11 @@ Su dung:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import re
+import tempfile
 import time
 import zipfile
 from html import escape
@@ -159,7 +163,7 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     book.spine = ["nav"] + epub_chapters
 
     epub.write_epub(output_file, book, {})
-    _record_packaged_source(input_file, output_file)
+    _record_packaged_source(input_file, output_file, title, author)
     try:
         copy_to_downloads(output_file)
     except Exception as e:
@@ -167,28 +171,67 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     return output_file
 
 
-_LAST_PACKAGED_SOURCE: dict[str, tuple[str, int, int]] = {}
+def _file_signature(path: str) -> dict:
+    stat = os.stat(path)
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": os.path.abspath(path), "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns, "sha256": digest.hexdigest()}
 
 
-def _record_packaged_source(translated_file: str, package_path: str) -> None:
-    """Ghi nhan trang thai file dich vua duoc dong goi vao package_path."""
+def _valid_package(package_path: str) -> bool:
+    if str(package_path).lower().endswith(".epub"):
+        with zipfile.ZipFile(package_path) as archive:
+            return (archive.read("mimetype") == b"application/epub+zip"
+                    and archive.testzip() is None)
+    if str(package_path).lower().endswith(".pdf"):
+        # ReportLab writes a classic xref table and a final startxref/EOF trailer.
+        with open(package_path, "rb") as package:
+            if package.read(5) != b"%PDF-":
+                return False
+            package.seek(0, os.SEEK_END)
+            size = package.tell()
+            package.seek(max(0, size - 4096))
+            trailer = re.search(rb"startxref\s+(\d+)\s+%%EOF\s*$", package.read())
+            if not trailer or int(trailer.group(1)) >= size:
+                return False
+            package.seek(int(trailer.group(1)))
+            return package.read(4) == b"xref"
+    return False
+
+
+def _record_packaged_source(translated_file: str, package_path: str,
+                           title: str | None = None, author: str | None = None) -> None:
+    """Atomically persist the source, package integrity and metadata after a build."""
+    state_path = os.path.abspath(package_path) + ".packaged.json"
+    temp_path = None
     try:
         if not os.path.isfile(translated_file) or not os.path.isfile(package_path):
+            return
+        if not _valid_package(package_path):
             return
         trans_stat = os.stat(translated_file)
         pkg_stat = os.stat(package_path)
         if pkg_stat.st_mtime_ns < trans_stat.st_mtime_ns:
             os.utime(package_path, ns=(trans_stat.st_atime_ns, trans_stat.st_mtime_ns))
-        _LAST_PACKAGED_SOURCE[os.path.abspath(package_path)] = (
-            os.path.abspath(translated_file),
-            trans_stat.st_size,
-            trans_stat.st_mtime_ns,
-        )
-    except OSError:
+        state = {"version": 1, "source": _file_signature(translated_file),
+                 "package": _file_signature(package_path), "title": title, "author": author}
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+                                         dir=os.path.dirname(state_path), suffix=".tmp") as output:
+            temp_path = output.name
+            json.dump(state, output, ensure_ascii=False)
+        os.replace(temp_path, state_path)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
         pass
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
-def is_package_up_to_date(translated_file: str, package_path: str) -> bool:
+def is_package_up_to_date(translated_file: str, package_path: str,
+                          title: str | None = None, author: str | None = None) -> bool:
     """Kiem tra file dong goi (EPUB/PDF) da ton tai va cap nhat day du theo translated_file chua."""
     try:
         if not translated_file or not package_path:
@@ -202,38 +245,19 @@ def is_package_up_to_date(translated_file: str, package_path: str) -> bool:
         if pkg_stat.st_mtime_ns < trans_stat.st_mtime_ns:
             return False
 
-        abs_trans = os.path.abspath(translated_file)
-        abs_pkg = os.path.abspath(package_path)
-        recorded = _LAST_PACKAGED_SOURCE.get(abs_pkg)
-        if recorded is not None and recorded != (abs_trans, trans_stat.st_size, trans_stat.st_mtime_ns):
+        with open(os.path.abspath(package_path) + ".packaged.json", encoding="utf-8") as receipt:
+            recorded = json.load(receipt)
+        if not isinstance(recorded, dict) or recorded.get("version") != 1:
             return False
-
-        lower_pkg = package_path.lower()
-        if lower_pkg.endswith(".epub"):
-            if zipfile.is_zipfile(package_path):
-                chapters = parse_chapters(translated_file)
-                if is_novel_title_entry(chapters, 0):
-                    chapters = chapters[1:]
-                if not chapters:
-                    return False
-                with zipfile.ZipFile(package_path, "r") as zf:
-                    epub_chap_count = sum(
-                        1
-                        for name in zf.namelist()
-                        if os.path.basename(name).startswith("chap_") and name.endswith(".xhtml")
-                    )
-                return epub_chap_count == len(chapters)
-            return recorded is not None
-
-        if lower_pkg.endswith(".pdf"):
-            with open(package_path, "rb") as f:
-                header = f.read(5)
-            if header == b"%PDF-":
-                return True
-            return recorded is not None
-
-        return True
-    except OSError:
+        if (recorded.get("source") != _file_signature(translated_file)
+                or recorded.get("package") != _file_signature(package_path)):
+            return False
+        if title is not None and recorded.get("title") != title:
+            return False
+        if author is not None and recorded.get("author") != author:
+            return False
+        return _valid_package(package_path)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile):
         return False
 
 
@@ -256,14 +280,14 @@ def ensure_packaged(
     epub_built = False
     pdf_built = False
 
-    if epub_path and not is_package_up_to_date(translated_file, epub_path):
+    if epub_path and not is_package_up_to_date(translated_file, epub_path, title, author):
         build_epub_fn(translated_file, epub_path, title, author)
-        _record_packaged_source(translated_file, epub_path)
+        _record_packaged_source(translated_file, epub_path, title, author)
         epub_built = True
 
-    if pdf_path and not is_package_up_to_date(translated_file, pdf_path):
+    if pdf_path and not is_package_up_to_date(translated_file, pdf_path, title, author):
         build_pdf_fn(translated_file, pdf_path, title, author)
-        _record_packaged_source(translated_file, pdf_path)
+        _record_packaged_source(translated_file, pdf_path, title, author)
         pdf_built = True
 
     return {"epub_built": epub_built, "pdf_built": pdf_built}

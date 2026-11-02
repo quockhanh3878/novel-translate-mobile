@@ -569,7 +569,8 @@ class HybridCrawlerSession:
 
             tls.sendall(struct.pack("!I B B I", len(hdrs), 1, 0x05, 1)[1:] + hdrs)
             body = bytearray()
-            status = 200
+            status = None
+            response_complete = False
             while True:
                 fh = bytearray()
                 while len(fh) < 9:
@@ -578,18 +579,19 @@ class HybridCrawlerSession:
                         break
                     fh.extend(chunk)
                 if len(fh) < 9:
-                    break
+                    return None
                 flen = (fh[0] << 16) | (fh[1] << 8) | fh[2]
                 ftype, fflags = fh[3], fh[4]
+                stream_id = int.from_bytes(fh[5:9], "big") & 0x7FFFFFFF
                 fp = bytearray()
                 while len(fp) < flen:
                     c = tls.recv(flen - len(fp))
                     if not c:
-                        break
+                        return None
                     fp.extend(c)
                 if ftype == 4 and not (fflags & 0x01):
                     tls.sendall(struct.pack("!I B B I", 0, 4, 0x01, 0)[1:])
-                elif ftype == 1 and fp:
+                elif ftype == 1 and stream_id == 1 and fp and status is None:
                     idx = 0
                     while idx < len(fp) and (fp[idx] & 0xE0) == 0x20:
                         if (fp[idx] & 0x1F) == 0x1F:
@@ -605,19 +607,28 @@ class HybridCrawlerSession:
                             status = 404
                         else:
                             status = 403
-                elif ftype == 0:
-                    body.extend(fp)
+                elif ftype == 0 and stream_id == 1:
+                    data = fp
+                    if fflags & 0x08:
+                        if not fp or fp[0] >= len(fp):
+                            return None
+                        data = fp[1:len(fp) - fp[0]]
+                    body.extend(data)
                     if flen > 0:
                         w = struct.pack("!I", flen)
                         tls.sendall(struct.pack("!I B B I", 4, 8, 0, 0)[1:] + w)
                         tls.sendall(struct.pack("!I B B I", 4, 8, 0, 1)[1:] + w)
                     if fflags & 0x01:
+                        response_complete = True
                         break
-                elif ftype in (3, 7):
+                elif ftype == 7 or (ftype == 3 and stream_id == 1):
+                    return None
+                if ftype == 1 and stream_id == 1 and fflags & 0x01:
+                    response_complete = True
                     break
 
             raw_bytes = bytes(body)
-            if not raw_bytes:
+            if not response_complete or not raw_bytes:
                 return None
             text = raw_bytes.decode("utf-8", errors="replace")
             if status in (200, 404) and not is_challenge_response(status, text):

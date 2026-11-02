@@ -198,7 +198,7 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         subject="Ban dich tieu thuyet tieng Viet",
     )
     document.build(story, onFirstPage=_draw_page_number, onLaterPages=_draw_page_number)
-    _record_packaged_source(input_file, output_file)
+    _record_packaged_source(input_file, output_file, title, author)
     try:
         copy_to_downloads(output_file)
     except Exception as exc:

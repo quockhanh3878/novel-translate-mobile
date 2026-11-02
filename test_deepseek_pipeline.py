@@ -77,7 +77,7 @@ def demo():
         assert os.path.getsize(result_path) > 0
 
         pdf_out = os.path.join(d, "out.pdf")
-        pdf_result = build_pdf(vi_path, pdf_out, "Truyện kiểm thử", "Tác giả")
+        pdf_result = build_pdf(vi_path, pdf_out, "Test Truyện", "Test Author")
         assert os.path.exists(pdf_result)
         assert os.path.getsize(pdf_result) > 1000
         with open(pdf_result, "rb") as pdf_file:
@@ -157,6 +157,7 @@ def demo():
                 "--epub", epub_out,
                 "--pdf", pdf_out,
                 "--title", "Test Truyện",
+                "--author", "Test Author",
                 "--api-key", "fake-key",
                 "--no-style-detect",
                 "--no-prepare",
