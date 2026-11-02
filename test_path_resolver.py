@@ -127,6 +127,50 @@ class TestPathResolver(unittest.TestCase):
             res = resolve_pipeline_paths(url, title="Tên Cũ", cwd=cwd)
             self.assertEqual(res["raw_path"], legacy)
 
+    def test_guess_title_and_resolve_consistent_package_names(self):
+        from crawler import guess_title
+
+        url = "https://www.wa01.com/novel/pagea/qingshan-huishuohuadezhouzi_1.html"
+        raw_win = r"F:\Clone\novel-translate-mobile\Qingshan Huishuohuadezhouzi_raw.txt"
+        raw_rel = "Qingshan Huishuohuadezhouzi_raw.txt"
+        viet_rel = "Qingshan Huishuohuadezhouzi_raw.txt.viet.txt"
+
+        self.assertEqual(guess_title(url), "Qingshan Huishuohuadezhouzi")
+        self.assertEqual(guess_title(raw_win), "Qingshan Huishuohuadezhouzi")
+        self.assertEqual(guess_title(raw_rel), "Qingshan Huishuohuadezhouzi")
+        self.assertEqual(guess_title(viet_rel), "Qingshan Huishuohuadezhouzi")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp).resolve()
+            res_url = resolve_pipeline_paths(url, title="", cwd=cwd)
+            res_raw = resolve_pipeline_paths(str(cwd / raw_rel), title="", cwd=cwd)
+            self.assertEqual(res_url["epub_path"], cwd / "Qingshan Huishuohuadezhouzi.epub")
+            self.assertEqual(res_raw["epub_path"], cwd / "Qingshan Huishuohuadezhouzi.epub")
+            self.assertEqual(res_url["pdf_path"], cwd / "Qingshan Huishuohuadezhouzi.pdf")
+            self.assertEqual(res_raw["pdf_path"], cwd / "Qingshan Huishuohuadezhouzi.pdf")
+
+    def test_guess_title_and_resolve_adapter_urls(self):
+        from crawler import guess_title
+
+        pairs = [
+            ("https://www.uukanshu.cc/book/11966/", "https://www.uukanshu.cc/book/11966/7353294.html", "11966"),
+            ("https://www.bgq99.cc/book/1217966/", "https://www.bgq99.cc/book/1217966/1.html", "1217966"),
+            ("https://www.69shuba.com/book/90175.htm", "https://www.69shuba.com/txt/90175/40620030", "90175"),
+            ("https://www.shubaow.net/book/378.html", "https://www.shubaow.net/book/378/140651.html", "378"),
+            ("https://www.biquge.tw/book/200183/", "https://www.biquge.tw/book/200183/75125892.html", "200183"),
+            ("https://www.tianyabooks.com/net/csx_03/", "https://www.tianyabooks.com/net/csx_03/27174.html", "Csx 03"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp).resolve()
+            for catalog_url, chapter_url, expected_title in pairs:
+                self.assertEqual(guess_title(catalog_url), expected_title)
+                self.assertEqual(guess_title(chapter_url), expected_title)
+                res_cat = resolve_pipeline_paths(catalog_url, title="", cwd=cwd)
+                res_ch = resolve_pipeline_paths(chapter_url, title="", cwd=cwd)
+                self.assertEqual(res_cat["raw_path"], res_ch["raw_path"])
+                self.assertEqual(res_cat["epub_path"], res_ch["epub_path"])
+                self.assertEqual(res_cat["pdf_path"], res_ch["pdf_path"])
+
     def test_is_safe_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()

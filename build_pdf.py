@@ -22,7 +22,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
-from build_epub import copy_to_downloads
+from build_epub import _record_packaged_source, copy_to_downloads
 from crawler import is_novel_title_entry, parse_chapters
 
 
@@ -198,6 +198,7 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         subject="Ban dich tieu thuyet tieng Viet",
     )
     document.build(story, onFirstPage=_draw_page_number, onLaterPages=_draw_page_number)
+    _record_packaged_source(input_file, output_file)
     try:
         copy_to_downloads(output_file)
     except Exception as exc:

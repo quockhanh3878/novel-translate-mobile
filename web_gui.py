@@ -487,6 +487,9 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
                 
                 # Parse crawl progress
                 if STATE["step"] == "crawling":
+                    catalog_total_match = re.search(r"Found\s+(\d+)\s+chapters\s+in", line)
+                    if catalog_total_match:
+                        STATE["total_chapters"] = int(catalog_total_match.group(1))
                     crawl_match = re.search(r"(?:Da luu chuong|Da co)\s+(\d+)", line)
                     if crawl_match:
                         STATE["current_chapter"] = int(crawl_match.group(1))
@@ -708,7 +711,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raw_path = paths["raw_path"]
             if not raw_path.is_file():
                 adapter = find_adapter(input_value)
-                if adapter and adapter.is_catalog_url(input_value):
+                if adapter and adapter.catalog_url(input_value):
                     return estimate_catalog(input_value, adapter, model=model, reasoning_effort=effort,
                                             no_thinking=no_thinking,
                                             peak=bool(allow_peak and is_peak_hour()))
@@ -752,6 +755,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "can_quit": SHUTDOWN_HOOK is not None,
                 "can_open_dir": _platform() == "windows",
                 "can_pick_dir": _platform() == "windows",
+                "supported_sources": [
+                    "uukanshu.cc",
+                    "69shuba.com",
+                    "bgq99.cc",
+                    "shubaow.net",
+                    "biquge.tw",
+                    "tianyabooks.com",
+                    "wa01.com",
+                ],
             })
         elif path == "/library":
             output_dir_param = urllib.parse.parse_qs(parsed.query).get("output_dir", [""])[0].strip()

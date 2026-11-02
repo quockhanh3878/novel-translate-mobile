@@ -90,14 +90,23 @@ def count_chapters(file_path: str) -> int:
 
 
 def guess_title(text: str) -> str:
-    """Doan ten truyen tu URL chuong 1 (slug cuoi duong dan, bo _<so>.html) hoac tu ten
+    """Doan ten truyen tu URL muc luc / chuong 1 (slug cuoi duong dan, bo _<so>.html) hoac tu ten
     file da cao san, thay -/_ bang khoang trang + viet hoa dau tu. Dung lam mac dinh khi
     nguoi dung khong nhap ten truyen - khong chinh xac 100% nhung du dung lam ten file/
     metadata EPUB, nguoi dung van sua lai duoc truoc khi bam chay."""
-    slug = text.rstrip("/").rsplit("/", 1)[-1]
-    slug = re.sub(r"_\d+\.html?$", "", slug)
+    candidate = (text or "").strip()
+    if candidate.lower().startswith(("http://", "https://")):
+        adapter = find_adapter(candidate)
+        if adapter:
+            catalog = adapter.catalog_url(candidate)
+            if catalog:
+                candidate = catalog
+    slug = re.split(r"[\\/]", candidate.rstrip("/\\"))[-1]
+    slug = re.sub(r"_\d+\.html?$", "", slug, flags=re.IGNORECASE)
+    slug = re.sub(r"(?:_raw)?(?:\.viet)?\.txt$", "", slug, flags=re.IGNORECASE)
     slug = os.path.splitext(slug)[0]
-    words = re.split(r"[-_]+", slug)
+    slug = re.sub(r"_raw$", "", slug, flags=re.IGNORECASE)
+    words = re.split(r"[-_\s]+", slug)
     return " ".join(w.capitalize() for w in words if w) or "Truyen"
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import time
+import zipfile
 from html import escape
 
 from ebooklib import epub
@@ -158,11 +159,114 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
     book.spine = ["nav"] + epub_chapters
 
     epub.write_epub(output_file, book, {})
+    _record_packaged_source(input_file, output_file)
     try:
         copy_to_downloads(output_file)
     except Exception as e:
         print(f"Loi clone file sang Download: {e}")
     return output_file
+
+
+_LAST_PACKAGED_SOURCE: dict[str, tuple[str, int, int]] = {}
+
+
+def _record_packaged_source(translated_file: str, package_path: str) -> None:
+    """Ghi nhan trang thai file dich vua duoc dong goi vao package_path."""
+    try:
+        if not os.path.isfile(translated_file) or not os.path.isfile(package_path):
+            return
+        trans_stat = os.stat(translated_file)
+        pkg_stat = os.stat(package_path)
+        if pkg_stat.st_mtime_ns < trans_stat.st_mtime_ns:
+            os.utime(package_path, ns=(trans_stat.st_atime_ns, trans_stat.st_mtime_ns))
+        _LAST_PACKAGED_SOURCE[os.path.abspath(package_path)] = (
+            os.path.abspath(translated_file),
+            trans_stat.st_size,
+            trans_stat.st_mtime_ns,
+        )
+    except OSError:
+        pass
+
+
+def is_package_up_to_date(translated_file: str, package_path: str) -> bool:
+    """Kiem tra file dong goi (EPUB/PDF) da ton tai va cap nhat day du theo translated_file chua."""
+    try:
+        if not translated_file or not package_path:
+            return False
+        if not os.path.isfile(translated_file) or not os.path.isfile(package_path):
+            return False
+        trans_stat = os.stat(translated_file)
+        pkg_stat = os.stat(package_path)
+        if trans_stat.st_size <= 0 or pkg_stat.st_size <= 0:
+            return False
+        if pkg_stat.st_mtime_ns < trans_stat.st_mtime_ns:
+            return False
+
+        abs_trans = os.path.abspath(translated_file)
+        abs_pkg = os.path.abspath(package_path)
+        recorded = _LAST_PACKAGED_SOURCE.get(abs_pkg)
+        if recorded is not None and recorded != (abs_trans, trans_stat.st_size, trans_stat.st_mtime_ns):
+            return False
+
+        lower_pkg = package_path.lower()
+        if lower_pkg.endswith(".epub"):
+            if zipfile.is_zipfile(package_path):
+                chapters = parse_chapters(translated_file)
+                if is_novel_title_entry(chapters, 0):
+                    chapters = chapters[1:]
+                if not chapters:
+                    return False
+                with zipfile.ZipFile(package_path, "r") as zf:
+                    epub_chap_count = sum(
+                        1
+                        for name in zf.namelist()
+                        if os.path.basename(name).startswith("chap_") and name.endswith(".xhtml")
+                    )
+                return epub_chap_count == len(chapters)
+            return recorded is not None
+
+        if lower_pkg.endswith(".pdf"):
+            with open(package_path, "rb") as f:
+                header = f.read(5)
+            if header == b"%PDF-":
+                return True
+            return recorded is not None
+
+        return True
+    except OSError:
+        return False
+
+
+def ensure_packaged(
+    translated_file: str,
+    epub_path: str,
+    pdf_path: str,
+    title: str,
+    author: str = "Unknown",
+    build_epub_fn=None,
+    build_pdf_fn=None,
+) -> dict[str, bool]:
+    """Chi dong goi EPUB/PDF khi file chua ton tai hoac da cu so voi translated_file."""
+    if build_epub_fn is None:
+        build_epub_fn = build_epub
+    if build_pdf_fn is None:
+        from build_pdf import build_pdf as _default_build_pdf
+        build_pdf_fn = _default_build_pdf
+
+    epub_built = False
+    pdf_built = False
+
+    if epub_path and not is_package_up_to_date(translated_file, epub_path):
+        build_epub_fn(translated_file, epub_path, title, author)
+        _record_packaged_source(translated_file, epub_path)
+        epub_built = True
+
+    if pdf_path and not is_package_up_to_date(translated_file, pdf_path):
+        build_pdf_fn(translated_file, pdf_path, title, author)
+        _record_packaged_source(translated_file, pdf_path)
+        pdf_built = True
+
+    return {"epub_built": epub_built, "pdf_built": pdf_built}
 
 
 def main():

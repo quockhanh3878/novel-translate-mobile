@@ -44,8 +44,8 @@
 
         <form id="f">
             <label for="input_source">Nguồn truyện</label>
-            <input name="input" id="input_source" placeholder="Link truyện hoặc đường dẫn file .txt thô" aria-describedby="source-hint" required>
-            <p class="hint source-hint" id="source-hint">Link truyện: https://uukanshu.cc/book/11966/ (trang mục lục), hoặc link chương 1 dạng .../ten-truyen_1.html (kết thúc bằng _số.html)</p>
+            <input name="input" id="input_source" placeholder="Link mục lục / chương 1 hoặc đường dẫn file .txt thô" aria-describedby="source-hint" required>
+            <p class="hint source-hint" id="source-hint">Hỗ trợ link mục lục hoặc chương 1: uukanshu.cc, 69shuba.com, bgq99.cc, shubaow.net, biquge.tw, tianyabooks.com, wa01.com (hoặc file .txt/.html/.mhtml đã lưu).</p>
             <div class="file-upload-row">
                 <label for="raw_file_input">Chọn TXT đã cào hoặc HTML/MHTML chương đã lưu từ trình duyệt...</label>
                 <input type="file" id="raw_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
@@ -146,22 +146,21 @@
                 <summary>Hướng dẫn và khắc phục sự cố</summary>
                 <div class="details-body help" id="help-body">
                     <div class="help-block">
-                        <strong>Tự động khôi phục (Resume)</strong>
-                        <p>Nếu cào hoặc dịch bị dừng giữa chừng (mất mạng, tắt app...), chỉ cần nhập lại thông tin cũ và bấm chạy lại. Các chương đã xong được giữ nguyên, hệ thống tiếp tục từ chương dang dở. Thông tin lần chạy trước được nhớ sẵn trong ô nhập.</p>
+                        <strong>Tự động khôi phục (Resume) và đóng gói thông minh</strong>
+                        <p>Nếu cào hoặc dịch bị dừng giữa chừng (mất mạng, tắt app...), chỉ cần nhập lại thông tin cũ và bấm chạy lại. Các chương đã xong được giữ nguyên, hệ thống tiếp tục từ chương dang dở và tự động bỏ qua bước đóng gói lại nếu file EPUB/PDF đã khớp bản dịch mới nhất.</p>
                     </div>
                     <div class="help-block" id="help-termux" hidden>
-                        <strong>Kiểm tra tiến trình chạy ẩn (Termux)</strong>
-                        <p>Mở cửa sổ Termux mới và nhập lệnh để kiểm tra Python có đang chạy không:</p>
-                        <code>ps -ef | grep python</code>
-                        <p>Xem nhật ký mới nhất:</p>
-                        <code>tail -n 20 ~/novel/pipeline_*.log</code>
-                        <p>Tắt cưỡng bức:</p>
-                        <code>pkill -f python</code>
+                        <strong>Chạy và kiểm tra tiến trình trên Termux</strong>
+                        <p>Khởi chạy giao diện web hoặc cập nhật trên Termux:</p>
+                        <code>bash ~/novel/update_termux.sh</code>
+                        <p>Xem nhật ký máy chủ web hoặc kiểm tra tiến trình Python:</p>
+                        <code>tail -n 30 ~/novel/web_gui.log &amp;&amp; ps -ef | grep python</code>
+                        <p>Với trang chặn Cloudflare Turnstile (như biquge.tw), có thể lưu trang chương từ trình duyệt thành file HTML/MHTML rồi chọn ở nút tải file phía trên, hoặc cài Chromium headless trên Termux (<code class="inline">pkg install tur-repo &amp;&amp; pkg install chromium</code>).</p>
                     </div>
                     <div class="help-block" id="help-termux-files" hidden>
                         <strong>Lấy file EPUB/PDF ra điện thoại (Termux)</strong>
-                        <p>Mọi file nằm trong thư mục <code class="inline">~/novel</code>. Đưa EPUB/PDF ra thư mục Download:</p>
-                        <code>cp ~/novel/*.{epub,pdf} /sdcard/Download/</code>
+                        <p>Khi dịch xong, ứng dụng tự động chép EPUB/PDF ra thư mục <code class="inline">Documents</code> hoặc <code class="inline">Download</code> của điện thoại (nếu đã chạy <code class="inline">termux-setup-storage</code>). Bạn cũng có thể tải trực tiếp ở mục "Truyện đã dịch" bên dưới hoặc chép thủ công:</p>
+                        <code>cp ~/novel/*.{epub,pdf} ~/storage/shared/Download/</code>
                     </div>
                     <div class="help-block" id="help-desktop" hidden>
                         <strong>Vị trí lưu file (máy tính)</strong>

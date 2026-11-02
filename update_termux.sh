@@ -34,6 +34,7 @@ git fetch origin
 git reset --hard origin/main
 chmod +x run_termux.sh update_termux.sh setup_termux.sh 2>/dev/null || true
 pip install --break-system-packages -r requirements.txt 2>/dev/null || pip install -r requirements.txt
+pip install --break-system-packages --only-binary=:all: curl_cffi 2>/dev/null || pip install --only-binary=:all: curl_cffi 2>/dev/null || true
 
 echo "== 3/3: Khoi dong lai Web GUI =="
 start_gui

@@ -137,6 +137,7 @@ def demo():
     try:
         seen = observe([
             "=== Buoc 1/4: Cao truyen ===",
+            "Found 10 chapters in https://www.tianyabooks.com/net/csx_03/.",
             "Da luu chuong 7: abc",
             "=== Buoc 2/4: Dich bang DeepSeek API ===",
             "Da phan tich 3 chuong tu x.txt.",
@@ -145,7 +146,7 @@ def demo():
             "=== Buoc 4/4: Dong goi EPUB ===",
         ], stream_mode=False)
         assert step_order(seen) == ["crawling", "translating", "validating", "packaging", "done"], seen
-        assert ("crawling", 7, 0) in seen, seen
+        assert ("crawling", 7, 10) in seen, seen
         assert ("translating", 2, 3) in seen, seen
 
         # che do stream: hai moc dau khong doi buoc (giu "streaming")
@@ -178,6 +179,18 @@ def demo():
         status, headers, body = get(base, "/")
         assert status == 200 and b"/assets/app.js" in body and b"estimate-crawled" in body \
             and b"estimate-balance" in body and "text/html" in headers["Content-Type"]
+        for domain in (
+            b"uukanshu.cc",
+            b"69shuba.com",
+            b"bgq99.cc",
+            b"shubaow.net",
+            b"biquge.tw",
+            b"tianyabooks.com",
+            b"wa01.com",
+            b"update_termux.sh",
+            b"web_gui.log",
+        ):
+            assert domain in body, domain
         for asset in ("/assets/app.js", "/assets/app.css", "/assets/fonts/fonts.css",
                       "/assets/fonts/plus-jakarta-sans-vietnamese.woff2", "/assets/favicon.svg"):
             status, headers, body = get(base, asset)
@@ -193,6 +206,15 @@ def demo():
         info = json.loads(body)
         assert status == 200 and info["app"] == "novel-translator" and info["version"]
         assert info["can_quit"] is False and os.path.samefile(info["data_dir"], _work.name)
+        assert set(info.get("supported_sources", [])) == {
+            "uukanshu.cc",
+            "69shuba.com",
+            "bgq99.cc",
+            "shubaow.net",
+            "biquge.tw",
+            "tianyabooks.com",
+            "wa01.com",
+        }, info
 
         status, _, body = get(base, "/library")
         names = [item["name"] for item in json.loads(body)["items"]]

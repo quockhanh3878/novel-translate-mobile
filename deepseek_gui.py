@@ -22,10 +22,11 @@ from tkinter import ttk, messagebox, filedialog
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_novel
+from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_novel, guess_title
+from path_resolver import sanitize_filename
 from deepseek_translate import (load_dotenv, load_glossary, save_glossary, translate_novel,
                                 glossary_path_for)
-from build_epub import build_epub
+from build_epub import build_epub, ensure_packaged
 from build_pdf import build_pdf
 
 BG_COLOR = "#1e1e1e"
@@ -116,10 +117,17 @@ class AppGUI(tk.Tk):
         self.lbl_api_status = tk.Label(left, text=api_status, bg=BG_COLOR, fg=api_color, font=("Segoe UI", 9, "bold"))
         self.lbl_api_status.pack(anchor="w", pady=(0, 15))
 
-        ttk.Label(left, text="URL chương 1 (bỏ trống nếu đã có sẵn file thô):").pack(anchor="w", pady=2)
+        ttk.Label(
+            left,
+            text="URL mục lục hoặc chương 1 (uukanshu, 69shuba, bgq99, shubaow, biquge.tw, tianyabooks, wa01):",
+        ).pack(anchor="w", pady=2)
         self.ent_url = ttk.Entry(left, width=70)
         self.ent_url.pack(fill="x", pady=(0, 10))
         self.ent_url.insert(0, DEFAULT_START_URL)
+        self._last_auto_raw = DEFAULT_OUTPUT
+        self._last_auto_translated = DEFAULT_OUTPUT + ".viet.txt"
+        self._last_auto_title = "Đệ Tam Trùng Nhân Cách"
+        self.ent_url.bind("<FocusOut>", self._on_url_changed)
 
         ttk.Label(left, text="File truyện thô (đã cào):").pack(anchor="w", pady=2)
         self.ent_raw = ttk.Entry(left, width=70)
@@ -230,6 +238,31 @@ class AppGUI(tk.Tk):
             self.ent_dir.delete(0, tk.END)
             self.ent_dir.insert(0, os.path.abspath(directory))
 
+    def _on_url_changed(self, _event=None):
+        url = self.ent_url.get().strip()
+        if not url or url == DEFAULT_START_URL:
+            return
+        guessed = guess_title(url)
+        safe_slug = sanitize_filename(guessed)
+        new_raw = f"{safe_slug}_raw.txt"
+        new_translated = f"{new_raw}.viet.txt"
+        cur_raw = self.ent_raw.get().strip()
+        cur_trans = self.ent_translated.get().strip()
+        cur_title = self.ent_title.get().strip()
+        if not cur_raw or cur_raw == self._last_auto_raw:
+            self.ent_raw.delete(0, tk.END)
+            self.ent_raw.insert(0, new_raw)
+            self._last_auto_raw = new_raw
+        if not cur_trans or cur_trans == self._last_auto_translated:
+            self.ent_translated.delete(0, tk.END)
+            self.ent_translated.insert(0, new_translated)
+            self._last_auto_translated = new_translated
+        if not cur_title or cur_title == self._last_auto_title:
+            self.ent_title.delete(0, tk.END)
+            self.ent_title.insert(0, guessed)
+            self._last_auto_title = guessed
+        self.reload_glossary_view()
+
     def log(self, message):
         self.log_queue.put(message)
 
@@ -249,10 +282,11 @@ class AppGUI(tk.Tk):
             messagebox.showerror("Lỗi", "Thiếu DEEPSEEK_API_KEY. Tạo file .env (xem .env.example) rồi khởi động lại.")
             return
 
+        self._on_url_changed()
         raw_file = self.ent_raw.get().strip()
         start_url = self.ent_url.get().strip()
         if not start_url and not os.path.exists(raw_file):
-            messagebox.showerror("Lỗi", f"Không có URL chương 1 và cũng không tìm thấy file thô {raw_file}.")
+            messagebox.showerror("Lỗi", f"Không có URL mục lục/chương 1 và cũng không tìm thấy file thô {raw_file}.")
             return
 
         try:
@@ -324,11 +358,11 @@ class AppGUI(tk.Tk):
             pdf_path = os.path.join(save_dir, f"{title}.pdf")
             def _on_chapter_gui(idx, total, translated):
                 self.on_chapter_progress(idx, total, translated)
+                if not translated:
+                    return
                 try:
-                    from build_epub import build_epub
-                    from build_pdf import build_pdf
-                    build_epub(translated_file, epub_path, title, author)
-                    build_pdf(translated_file, pdf_path, title, author)
+                    ensure_packaged(translated_file, epub_path, pdf_path, title, author,
+                                    build_epub_fn=build_epub, build_pdf_fn=build_pdf)
                 except Exception as e:
                     self.log(f"  [Lỗi EPUB/PDF] Không thể đóng gói chương {idx}: {e}")
 
@@ -347,8 +381,10 @@ class AppGUI(tk.Tk):
             self.lbl_status.config(text="Bước 3/3: Đang đóng gói EPUB + PDF...")
             epub_path = os.path.join(save_dir, f"{title}.epub")
             pdf_path = os.path.join(save_dir, f"{title}.pdf")
-            build_epub(translated_file, epub_path, title, author)
-            build_pdf(translated_file, pdf_path, title, author)
+            pkg_res = ensure_packaged(translated_file, epub_path, pdf_path, title, author,
+                                      build_epub_fn=build_epub, build_pdf_fn=build_pdf)
+            if not pkg_res["epub_built"] and not pkg_res["pdf_built"]:
+                self.log("[EPUB/PDF] Đã có sẵn file đóng gói cập nhật, bỏ qua đóng gói trùng.")
 
             self.log(f"\n[THÀNH CÔNG] Đã lưu EPUB tại: {epub_path}")
             self.log(f"[THÀNH CÔNG] Đã lưu PDF tại: {pdf_path}")

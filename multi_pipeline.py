@@ -44,7 +44,7 @@ def _handle_sigterm(signum, frame):
 signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
-from build_epub import build_epub
+from build_epub import build_epub, ensure_packaged
 from build_pdf import build_pdf
 from crawler import crawl_novel
 from deepseek_translate import load_dotenv, translate_novel, DEFAULT_MODEL, DEFAULT_REASONING_EFFORT
@@ -115,9 +115,11 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
         log("=== Buoc 2/4: Dich bang DeepSeek API ===")
         
         def _on_chapter_multi(idx, total, translated):
+            if not translated:
+                return
             try:
-                build_epub(translated_file, epub_path, title, author)
-                build_pdf(translated_file, pdf_path, title, author)
+                ensure_packaged(translated_file, epub_path, pdf_path, title, author,
+                                build_epub_fn=build_epub, build_pdf_fn=build_pdf)
             except Exception as e:
                 log(f"  [Loi EPUB/PDF] Khong the dong goi chuong {idx}: {e}")
 
@@ -153,8 +155,10 @@ def run_one_novel(cfg: dict, api_key: str, balance_empty_event: threading.Event,
         log("=== Buoc 4/4: Dong goi EPUB + PDF ===")
         if failed:
             log(f"CANH BAO: {len(failed)} chuong dich that bai, EPUB/PDF se KHONG day du.")
-        build_epub(translated_file, epub_path, title, author)
-        build_pdf(translated_file, pdf_path, title, author)
+        pkg_res = ensure_packaged(translated_file, epub_path, pdf_path, title, author,
+                                  build_epub_fn=build_epub, build_pdf_fn=build_pdf)
+        if not pkg_res["epub_built"] and not pkg_res["pdf_built"]:
+            log("[EPUB/PDF] Da co san file dong goi cap nhat, bo qua dong goi trung.")
         log(f"Hoan tat! EPUB: {epub_path}")
         log(f"Hoan tat! PDF: {pdf_path}")
         result_slot["status"] = "done"

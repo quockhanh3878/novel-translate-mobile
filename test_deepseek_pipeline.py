@@ -14,7 +14,7 @@ from deepseek_translate import (
     parse_chapters, count_translated_chapters, build_user_prompt,
     is_peak_hour, _peak_window_end, BEIJING_TZ,
 )
-from build_epub import parse_chapters as parse_chapters_epub, build_epub
+from build_epub import parse_chapters as parse_chapters_epub, build_epub, ensure_packaged, is_package_up_to_date
 from build_pdf import build_pdf
 
 
@@ -85,6 +85,89 @@ def demo():
         assert pdf_bytes.startswith(b"%PDF-")
         assert b"/FontFile" in pdf_bytes
         assert b"/ToUnicode" in pdf_bytes
+
+        # Kiem tra chong dong goi trung khi da co san file EPUB/PDF cap nhat:
+        assert is_package_up_to_date(vi_path, epub_out) is True
+        assert is_package_up_to_date(vi_path, pdf_out) is True
+
+        epub_calls = []
+        pdf_calls = []
+
+        def tracked_epub(inp, out, title, author):
+            epub_calls.append(out)
+            return build_epub(inp, out, title, author)
+
+        def tracked_pdf(inp, out, title, author):
+            pdf_calls.append(out)
+            return build_pdf(inp, out, title, author)
+
+        # Khi ca EPUB va PDF deu da cap nhat, ensure_packaged phai bo qua ca hai
+        res_skip = ensure_packaged(
+            vi_path, epub_out, pdf_out, "Test Truyện", "Test Author",
+            build_epub_fn=tracked_epub, build_pdf_fn=tracked_pdf,
+        )
+        assert res_skip == {"epub_built": False, "pdf_built": False}, res_skip
+        assert epub_calls == [] and pdf_calls == [], (epub_calls, pdf_calls)
+
+        # Neu xoa rieng file PDF, chi dong goi lai PDF, giu nguyen EPUB
+        os.remove(pdf_out)
+        res_partial = ensure_packaged(
+            vi_path, epub_out, pdf_out, "Test Truyện", "Test Author",
+            build_epub_fn=tracked_epub, build_pdf_fn=tracked_pdf,
+        )
+        assert res_partial == {"epub_built": False, "pdf_built": True}, res_partial
+        assert epub_calls == [] and len(pdf_calls) == 1, (epub_calls, pdf_calls)
+
+        # Khi file dich co them chuong moi, ca EPUB va PDF phai duoc dong goi cap nhat
+        with open(vi_path, "a", encoding="utf-8") as f:
+            f.write("=== Chương 2: Tiếp theo ===\n\nTạm biệt.\n\n" + "=" * 40 + "\n\n")
+        assert is_package_up_to_date(vi_path, epub_out) is False
+        assert is_package_up_to_date(vi_path, pdf_out) is False
+        res_rebuild = ensure_packaged(
+            vi_path, epub_out, pdf_out, "Test Truyện", "Test Author",
+            build_epub_fn=tracked_epub, build_pdf_fn=tracked_pdf,
+        )
+        assert res_rebuild == {"epub_built": True, "pdf_built": True}, res_rebuild
+        assert len(epub_calls) == 1 and len(pdf_calls) == 2, (epub_calls, pdf_calls)
+
+        # Goi lai ensure_packaged ngay sau do (nhu Buoc 4/4 sau on_chapter) phai bo qua
+        res_after = ensure_packaged(
+            vi_path, epub_out, pdf_out, "Test Truyện", "Test Author",
+            build_epub_fn=tracked_epub, build_pdf_fn=tracked_pdf,
+        )
+        assert res_after == {"epub_built": False, "pdf_built": False}, res_after
+        assert len(epub_calls) == 1 and len(pdf_calls) == 2, (epub_calls, pdf_calls)
+
+        # Kiem tra pipeline.main(): khi file dich da du 2 chuong va EPUB/PDF da co san,
+        # chay lai pipeline khong duoc dong goi trung (0 lan goi build_epub / build_pdf).
+        import pipeline
+        import sys
+        orig_argv = sys.argv
+        orig_pipe_epub = pipeline.build_epub
+        orig_pipe_pdf = pipeline.build_pdf
+        pipe_epub_calls = []
+        pipe_pdf_calls = []
+        pipeline.build_epub = lambda *a, **kw: pipe_epub_calls.append(a)
+        pipeline.build_pdf = lambda *a, **kw: pipe_pdf_calls.append(a)
+        try:
+            sys.argv = [
+                "pipeline.py",
+                "--raw", zh_path,
+                "--translated", vi_path,
+                "--epub", epub_out,
+                "--pdf", pdf_out,
+                "--title", "Test Truyện",
+                "--api-key", "fake-key",
+                "--no-style-detect",
+                "--no-prepare",
+                "--allow-peak",
+            ]
+            pipeline.main()
+        finally:
+            sys.argv = orig_argv
+            pipeline.build_epub = orig_pipe_epub
+            pipeline.build_pdf = orig_pipe_pdf
+        assert pipe_epub_calls == [] and pipe_pdf_calls == [], (pipe_epub_calls, pipe_pdf_calls)
 
         # crawl_novel phai TU DONG resume tu chuong ke tiep dua tren so chuong da co
         # trong file, khong dua vao so chuong ghi trong start_url - tranh cao trung

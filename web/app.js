@@ -177,8 +177,16 @@
         if (key) {
             refreshKeyBalance(key);
         } else {
-            renderKeyBalance({ available: false, reason: 'Chưa có API Key.' });
+            refreshKeyBalance('');
         }
+    });
+
+    apiKeyInput.addEventListener('input', () => {
+        if (balanceRequest) balanceRequest.abort();
+        balanceRequest = null;
+        balanceSequence += 1;
+        renderKeyBalance({ available: false, reason: apiKeyInput.value.trim()
+            ? 'Key đã thay đổi; xác nhận key để cập nhật số dư.' : 'Chưa có API Key.' });
     });
 
     // ---------- Chon file tho ----------
@@ -255,6 +263,9 @@
     let estimateRequest = null;
     let estimateSequence = 0;
     let lastKeyBalance = null;
+    let balanceRequest = null;
+    let balanceRequestedKey = '';
+    let balanceSequence = 0;
 
     function formatUsd(value) {
         return '$' + Number(value || 0).toFixed(2);
@@ -291,7 +302,7 @@
         estimateBalance.textContent = infos.map((info) => formatBalance(info.total_balance, info.currency || '')).join(' / ');
         estimateBalanceDetail.textContent = infos.map((info) =>
             'Tặng ' + formatBalance(info.granted_balance, info.currency || '') +
-            ', đã nạp ' + formatBalance(info.topped_up_balance, info.currency || '')
+            ', còn từ tiền nạp ' + formatBalance(info.topped_up_balance, info.currency || '')
         ).join(' | ');
     }
 
@@ -332,14 +343,46 @@
     }
 
     async function refreshKeyBalance(key) {
+        const requestedKey = String(key ?? apiKeyInput.value).trim();
+        if (balanceRequest && balanceRequestedKey === requestedKey) return;
+        if (balanceRequest) balanceRequest.abort();
+        const sequence = ++balanceSequence;
+        balanceRequest = null;
+        if (!requestedKey) {
+            renderKeyBalance({ available: false, reason: 'Chưa có API Key.' });
+            return;
+        }
+        balanceRequestedKey = requestedKey;
+        balanceRequest = new AbortController();
+        renderKeyBalance({ available: false, reason: 'Đang cập nhật số dư...' });
         try {
-            const r = await postForm('/key_balance', { key: key || '' });
+            const r = await fetch('/key_balance', {
+                method: 'POST',
+                body: new URLSearchParams({ key: requestedKey }),
+                signal: balanceRequest.signal
+            });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
             const data = await r.json();
-            renderKeyBalance(data);
+            if (sequence === balanceSequence && apiKeyInput.value.trim() === requestedKey) {
+                renderKeyBalance(data);
+            }
         } catch (error) {
-            renderKeyBalance({ available: false, reason: 'Lỗi kết nối khi lấy số dư: ' + error.message });
+            if (error.name !== 'AbortError' && sequence === balanceSequence &&
+                apiKeyInput.value.trim() === requestedKey) {
+                renderKeyBalance({ available: false, reason: 'Lỗi kết nối khi lấy số dư: ' + error.message });
+            }
+        } finally {
+            if (sequence === balanceSequence) balanceRequest = null;
         }
     }
+
+    function refreshVisibleBalance() {
+        if (!document.hidden && apiKeyInput.value.trim()) refreshKeyBalance();
+    }
+
+    setInterval(refreshVisibleBalance, 30000);
+    document.addEventListener('visibilitychange', refreshVisibleBalance);
+    window.addEventListener('focus', refreshVisibleBalance);
 
     async function refreshEstimate() {
         const input = inputSource.value.trim();
@@ -572,7 +615,11 @@
         const pct = total > 0 ? Math.min(100, Math.round(cur / total * 100)) : null;
 
         if (s.step === 'crawling') {
-            showProgress('Đang cào chương: ' + cur, 'Đang tải...', null);
+            if (total > 0) {
+                showProgress('Đang cào chương: ' + cur + '/' + total, pct + '%', pct);
+            } else {
+                showProgress('Đang cào chương: ' + cur, 'Đang tải...', null);
+            }
         } else if (s.step === 'streaming') {
             showProgress('Đã dịch thêm ' + cur + ' chương' + (total > 0 ? '/' + total : ''),
                 pct === null ? 'Đang dịch...' : pct + '%', pct);
@@ -637,7 +684,10 @@
                 errorReport.hidden = true;
             }
 
-            if (wasRunning && !s.running) loadLibrary();
+            if (wasRunning && !s.running) {
+                loadLibrary();
+                refreshVisibleBalance();
+            }
             wasRunning = s.running;
 
             if (s.running) pollTimeout = setTimeout(poll, 1000);
@@ -875,6 +925,7 @@
         } finally {
             btnRunTest.disabled = false;
             btnRunTest.textContent = 'Dịch và tạo EPUB/PDF';
+            refreshVisibleBalance();
         }
     };
 

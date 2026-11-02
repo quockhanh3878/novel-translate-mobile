@@ -125,6 +125,45 @@ class TestTermuxCompatibility(unittest.TestCase):
                     dest_none = getattr(web_gui, "_export_to_android_storage")(str(fake_epub))
                     self.assertIsNone(dest_none)
 
+    def test_termux_headless_cdp_args_and_fallback(self):
+        import hybrid_session
+
+        with patch.dict(os.environ, {"PREFIX": "/data/data/com.termux/files/usr"}, clear=False):
+            self.assertTrue(hybrid_session._is_headless_environment())
+            args = hybrid_session._build_cdp_browser_args(
+                "/data/data/com.termux/files/usr/bin/chromium",
+                "/tmp/ud",
+                9222,
+                "https://www.shubaow.net/book/378.html",
+                "Mozilla/5.0 HeadlessChrome/136.0.0.0",
+            )
+            self.assertIn("--headless=new", args)
+            self.assertIn("--no-sandbox", args)
+            self.assertIn("--disable-gpu", args)
+            self.assertTrue(any(a == "--user-agent=Mozilla/5.0 Chrome/136.0.0.0" for a in args))
+
+        # Khi HAS_CURL_CFFI=False tren Termux va cloudscraper bi chan 403,
+        # neu CDP browser tai duoc HTML thi tra ve truc tiep _last_cdp_response
+        with patch.object(hybrid_session, "HAS_CURL_CFFI", False), patch.object(
+            hybrid_session, "cffi_requests", None
+        ), patch.object(hybrid_session, "HAS_PLAYWRIGHT", False):
+            session = hybrid_session.HybridCrawlerSession(
+                enable_browser_fallback=True, log=lambda _: None
+            )
+            blocked = hybrid_session._SimpleHTTPResponse(403, b"Just a moment... cf-turnstile")
+            unlocked = hybrid_session._SimpleHTTPResponse(200, b"<html><body>Noi dung</body></html>")
+
+            def fake_cdp(target_url):
+                session._last_cdp_response = unlocked
+                return True
+
+            with patch.object(session._session, "get", return_value=blocked), patch.object(
+                session, "_try_stdlib_h2_request", return_value=None
+            ), patch.object(session, "_harvest_cookies_via_cdp_browser", side_effect=fake_cdp):
+                resp = session.get("https://example.com/book/1.html", retries=0)
+                self.assertEqual(resp.status_code, 200)
+                self.assertIn("Noi dung", resp.text)
+
 
 if __name__ == "__main__":
     unittest.main()

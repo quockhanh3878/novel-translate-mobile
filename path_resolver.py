@@ -103,7 +103,15 @@ def resolve_pipeline_paths(
     input_trimmed = (input_val or "").strip()
     is_url = input_trimmed.lower().startswith(("http://", "https://"))
 
-    safe_title = sanitize_filename(title) if title else "truyen"
+    if title and title.strip():
+        safe_title = sanitize_filename(title)
+    else:
+        try:
+            from crawler import guess_title
+            guessed = guess_title(input_trimmed) if input_trimmed else ""
+        except Exception:
+            guessed = ""
+        safe_title = sanitize_filename(guessed) if guessed else "truyen"
 
     if is_url:
         try:
