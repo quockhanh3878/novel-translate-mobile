@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from unittest.mock import Mock
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT)
@@ -33,7 +34,52 @@ def get(base, path):
         return e.code, e.headers, e.read()
 
 
+def check_client_disconnects():
+    def handler():
+        instance = web_gui.Handler.__new__(web_gui.Handler)
+        instance.send_response = Mock()
+        instance.send_header = Mock()
+        instance.end_headers = Mock()
+        instance.wfile = Mock()
+        instance.close_connection = False
+        return instance
+
+    with tempfile.TemporaryDirectory() as directory:
+        asset = Path(directory) / "sample.txt"
+        asset.write_bytes(b"sample")
+        for send_file in (False, True):
+            for stage in ("headers", "body"):
+                for error in (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    instance = handler()
+                    writer = instance.end_headers if stage == "headers" else instance.wfile.write
+                    writer.side_effect = error("client disconnected")
+                    if send_file:
+                        instance._send_file(str(asset), "text/plain")
+                    else:
+                        instance._json({"available": True})
+                    assert instance.close_connection is True, (send_file, stage, error)
+
+            instance = handler()
+            instance.wfile.write.side_effect = PermissionError("unexpected I/O failure")
+            try:
+                if send_file:
+                    instance._send_file(str(asset), "text/plain")
+                else:
+                    instance._json({"available": True})
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("Unexpected I/O errors must propagate")
+
+    instance = handler()
+    instance._json({"available": True})
+    instance.send_response.assert_called_once_with(200)
+    instance.wfile.write.assert_called_once_with(b'{"available": true}')
+    assert instance.close_connection is False
+
+
 def demo():
+    check_client_disconnects()
     # URL identity must remain stable when the display title changes. Existing
     # title-derived files from older GUI versions remain a compatibility fallback.
     with tempfile.TemporaryDirectory() as identity_dir:

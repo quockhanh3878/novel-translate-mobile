@@ -161,7 +161,11 @@ class HybridCrawlerSession:
         else:
             import requests
             self._session = requests.Session()
-            self._session.headers.update({"User-Agent": self.user_agent})
+            self._session.headers.update({
+                "User-Agent": self.user_agent,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
             self.engine = "requests"
 
     def get(self, url: str, headers: Optional[dict] = None, timeout: int = 15, retries: int = 2):

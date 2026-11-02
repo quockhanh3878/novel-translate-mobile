@@ -644,16 +644,19 @@ def _request_stop() -> None:
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def _send(self, status, body=b"", content_type=None, headers=None):
-        self.send_response(status)
-        if content_type:
-            self.send_header("Content-Type", content_type)
-        for key, value in (headers or {}).items():
-            self.send_header(key, value)
-        if status != 204:
-            self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if body and status != 204:
-            self.wfile.write(body)
+        try:
+            self.send_response(status)
+            if content_type:
+                self.send_header("Content-Type", content_type)
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            if status != 204:
+                self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body and status != 204:
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def _json(self, obj, status=200):
         self._send(status, json.dumps(obj, ensure_ascii=False).encode("utf-8"),
@@ -675,8 +678,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_header(key, value)
                 self.end_headers()
                 shutil.copyfileobj(f, self.wfile)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
 
     def _read_form(self):
         length = int(self.headers.get("Content-Length", 0))
