@@ -148,9 +148,12 @@ def _check_term_usage():
     assert check_term_usage(ch_twice, ["Cố Tòng Quân đến rồi.", "Cố Tòng Quân đi rồi."],
                             {"顾从军": "Cố Tòng Quân"}) == []
     # Cum ngan xuat hien doc lap ngoai cum dai nhung bi dich sai -> phai phat hien.
-    ch_both = {"title": "", "paragraphs": ["上官嫣红看了看上官。"]}
-    assert check_term_usage(ch_both, ["Thượng Quan Yên Hồng nhìn Thượng Quản."], terms) == [("上官", "Thượng Quan")]
-    assert check_term_usage(ch_both, ["Thượng Quan Yên Hồng nhìn Thượng Quan."], terms) == []
+    # (上官 trung tu thong dung "quan chuc cap cao" nen khong con bi kiem ep - dung 九贵.)
+    names = {"任九贵": "Nhậm Cửu Quý", "九贵": "Cửu Quý"}
+    ch_both = {"title": "", "paragraphs": ["任九贵看了看九贵。"]}
+    assert check_term_usage(ch_both, ["Nhậm Cửu Quý nhìn Cửu Quỳ."], names) == [("九贵", "Cửu Quý")]
+    assert check_term_usage(ch_both, ["Nhậm Cửu Quý nhìn Cửu Quý."], names) == []
+    assert check_term_usage(ch_both, ["Nhậm Cửu Quý nhìn Cửu Quý."], terms) == []
 
 
 def _check_reject_incomplete_and_preserve_title():

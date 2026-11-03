@@ -31,11 +31,10 @@ import sys
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from functools import lru_cache
-from pathlib import Path
 
 from build_idiom_dictionary import pretranslate, scan_novel
-from deepseek_translate import (_CJK_RE, _CJK_RUN_RE, DEFAULT_MODEL, _chapter_text, _idiom_detector,
+from deepseek_translate import (_CJK_RE, _CJK_RUN_RE, _HANVIET_WORDS, DEFAULT_MODEL, _chapter_text,
+                                _common_words, _idiom_detector,
                                 _novel_base, call_deepseek, glossary_path_for, idioms_path_for,
                                 load_curated_idioms, load_dotenv, load_glossary, load_idiom_memory,
                                 log_usage, merge_new_terms, normalize_zh, save_glossary, save_idiom_memory)
@@ -44,7 +43,6 @@ PREPARE_EFFORT = "high"
 NAME_BATCH = 150
 MAX_NAME_CANDIDATES = 600   # ung vien khong co trong tu dien, lay theo so lan xuat hien
 MAX_COMMON_CANDIDATES = 200  # tu co trong tu dien nhung hay gap - co the la biet danh (大兵 = "lính")
-_HANVIET_WORDS = Path(__file__).resolve().parent / "dictionaries" / "hanviet_words.json"
 
 # Chu dau/cuoi cum gan nhu khong bao gio la mot phan cua ten ("看着大兵", "大兵说").
 _STOP_START = set("的了着过是在与我你他她它这那就也都不没说把被给对向从又还很要会能想去有个吗呢吧啊呀么让位辆些们")
@@ -106,23 +104,6 @@ def save_state(path: str, state: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
-
-
-@lru_cache(maxsize=1)
-def _common_words() -> frozenset:
-    """Tu thong dung = muc trong tu dien Han Viet ma nghia viet thuong ("lính", "cảnh sát").
-    Muc nghia viet hoa ("Bát Hỉ", "Công An Phường") la ten rieng, khong tinh."""
-    try:
-        with open(_HANVIET_WORDS, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return frozenset()
-    out = set()
-    for zh, vi in data.items():
-        first = next((ch for ch in str(vi) if ch.isalpha()), "")
-        if first and first.islower():
-            out.add(normalize_zh(zh))
-    return frozenset(out)
 
 
 def _entropy(counter: Counter) -> float:

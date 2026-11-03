@@ -473,6 +473,34 @@ _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _CJK_RUN_RE = re.compile(_CJK_RE.pattern + "+")
 _IDIOMS_PATH = Path(__file__).resolve().parent / "dictionaries" / "idioms_verified.json"
 _CURATED_IDIOMS_PATH = Path(__file__).resolve().parent / "dictionaries" / "idioms_curated.json"
+_HANVIET_WORDS = Path(__file__).resolve().parent / "dictionaries" / "hanviet_words.json"
+
+
+@lru_cache(maxsize=1)
+def _common_words() -> frozenset:
+    """Tu thong dung = muc trong tu dien Han Viet ma nghia viet thuong ("lính", "cảnh sát").
+    Muc nghia viet hoa ("Bát Hỉ", "Công An Phường") la ten rieng, khong tinh."""
+    try:
+        with open(_HANVIET_WORDS, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return frozenset()
+    out = set()
+    for zh, vi in data.items():
+        first = next((ch for ch in str(vi) if ch.isalpha()), "")
+        if first and first.islower():
+            out.add(normalize_zh(zh))
+    return frozenset(out)
+
+
+def split_ambiguous_terms(terms: dict) -> tuple[dict, dict]:
+    """(ten ep cung, ten trung tu thong dung). 靜靜 vua la ten "Tĩnh Tĩnh" vua la "lặng lẽ"
+    (她靜靜地等): ep cung se dich sai moi cho dung nghia thuong, nen chi goi y theo ngu canh."""
+    common = _common_words()
+    forced, ambiguous = {}, {}
+    for zh, vi in terms.items():
+        (ambiguous if normalize_zh(zh) in common else forced)[zh] = vi
+    return forced, ambiguous
 MAX_GLOSSARY_PER_CHAPTER = 300
 MAX_IDIOM_HINTS = 60
 
@@ -645,9 +673,15 @@ def _fresh_idiom_hint(key: str, memory: dict | None, detector: dict) -> str:
 
 def build_terms_block(glossary: dict, known_idioms: dict | None = None,
                       fresh_idioms: dict | None = None) -> str:
-    lines = [f"{zh} = {vi}" for zh, vi in glossary.items()]
+    forced, ambiguous = split_ambiguous_terms(glossary)
+    lines = [f"{zh} = {vi}" for zh, vi in forced.items()]
     block = ("Glossary (Trung = Viet, BAT BUOC dung dung nguyen van):\n"
              + ("\n".join(lines) if lines else "(khong co)") + "\n")
+    if ambiguous:
+        block += ("\nTên riêng TRÙNG với từ thông dụng - CHỈ dùng đúng cách dịch này ở chỗ chữ đó là tên "
+                  "người/địa danh; chỗ nào là từ thường (VD 靜靜地 = lặng lẽ, 林子裡 = trong rừng) thì "
+                  "dịch theo nghĩa thường:\n"
+                  + "\n".join(f"{zh} = {vi}" for zh, vi in ambiguous.items()) + "\n")
     if known_idioms:
         block += ("\nThành ngữ đã có cách dịch (đã duyệt hoặc đã dùng ở chương trước) - dùng lại "
                   "đúng cách dịch này cho thống nhất, chỉ đổi khi ngữ cảnh thật sự khác:\n"
@@ -758,7 +792,9 @@ def check_term_usage(chapter: dict, paragraphs: list[str], terms: dict) -> list[
     """Kiem tra sau dich: muc glossary co trong ban goc thi ban dich phai chua dung
     ban dich co dinh o MOI lan xuat hien. Cum ngan nam tron trong cum dai hon
     (vd ho 上官 trong 上官嫣红) duoc bo qua neu khong con xuat hien doc lap.
-    Tra ve [(zh, vi)] bi thieu hoac dich sai mot phan."""
+    Tra ve [(zh, vi)] bi thieu hoac dich sai mot phan.
+    Ten trung tu thong dung khong kiem: dich theo nghia thuong o cho do la dung."""
+    terms = split_ambiguous_terms(terms)[0]
     sorted_zh = [zh for zh in sorted(terms, key=lambda k: len(normalize_zh(k)), reverse=True) if zh]
     src_paras = chapter.get("paragraphs", [])
 
@@ -1270,7 +1306,6 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
         )
 
     system_prompt = build_system_prompt(style_guide, term_categories)
-    last_style_eval_idx = pending[0] - 1 + title_offset
 
     if workers > 1:
         log(f"CANH BAO: workers={workers} - nhieu chapter dich song song co the lam mat nhat quan ten rieng.")
@@ -1307,26 +1342,8 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                 break
 
             batch = pending[batch_start:batch_start + workers]
-            current_idx = batch[0] + title_offset
-            if style_detect and current_idx - last_style_eval_idx >= 200:
-                log(f"Đã qua {current_idx - last_style_eval_idx} chương, đang tái đánh giá văn phong cho arc mới...")
-                recent_chapters = chapters[max(0, current_idx-30):current_idx+30]
-                style_data = detect_style_guide(recent_chapters, api_key, model, should_stop=should_stop, log=log)
-                new_style = style_data.get("style_guide", "").strip() if isinstance(style_data, dict) else (style_data.strip() if isinstance(style_data, str) else "")
-                new_term_cats = style_data.get("term_categories", "").strip() if isinstance(style_data, dict) else ""
-                if new_style:
-                    style_guide = new_style
-                    if new_term_cats:
-                        term_categories = new_term_cats
-                    system_prompt = build_system_prompt(style_guide, term_categories)
-                    log(f"Văn phong mới cập nhật: {style_guide}")
-                    try:
-                        with open(style_file, "w", encoding="utf-8") as f:
-                            json.dump({"style_guide": style_guide, "term_categories": term_categories}, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
-                last_style_eval_idx = current_idx
-
+            # Van phong chot 1 lan cho ca truyen (mau lay dau/giua/cuoi truyen), khong danh gia
+            # lai giua chung: doi system prompt lam mat cache gia re va doi giong van giua truyen.
             # Ban sao glossary cho ca dot: luong chinh con them thuat ngu moi trong khi
             # cac worker khac cung dot van dang doc.
             glossary_snapshot = dict(glossary)
