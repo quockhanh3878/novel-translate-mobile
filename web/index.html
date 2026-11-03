@@ -109,6 +109,13 @@
                         <span class="hint">0 = đến hết dữ liệu</span>
                     </div>
                 </div>
+                <div class="stream-box">
+                    <div class="stream-limit from-chapter-row">
+                        <label for="from_chapter_input">Cào từ chương:</label>
+                        <input type="number" name="from_chapter" id="from_chapter_input" min="1" max="99999">
+                    </div>
+                    <p class="hint">Để trống: tự cào tiếp sau chương cuối đã có. Chỉ nhập khi cào tiếp bị kẹt hoặc sai chỗ, ví dụ 850 = bắt đầu từ chương 850 của trang. Chương mới được nối vào cuối file thô, bản dịch cũ giữ nguyên. Chỉ áp dụng cho lần chạy này.</p>
+                </div>
             </section>
             <section class="cost-estimate" id="cost-estimate" aria-labelledby="cost-estimate-title" hidden>
                 <h2 id="cost-estimate-title">Ước tính cho toàn bộ dữ liệu nguồn</h2>

@@ -328,6 +328,18 @@ def demo():
         web_gui.run_pipeline("truyen_tho.txt", "Truyen Gia")
         assert web_gui.STATE["step"] == "idle" and "3" in web_gui.STATE["error"], web_gui.STATE
         assert "boom" in web_gui.STATE["error_detail"]
+
+        # "Cao tu chuong" chuyen xuong pipeline.py thanh --from-chapter
+        orig_meta = web_gui.run_metadata
+        web_gui.run_metadata = lambda raw, tr, url, title, author, model: {"display_title": title, "author": ""}
+        web_gui._worker_command = lambda: [sys.executable, "-u", "-c", "import sys; print(sys.argv)"]
+        try:
+            web_gui.run_pipeline("https://example.com/book_1.html", "Truyen Url", crawl_only=True, from_chapter=850)
+            assert "'--from-chapter', '850'" in web_gui.STATE["log"], web_gui.STATE["log"]
+            web_gui.run_pipeline("https://example.com/book_1.html", "Truyen Url", crawl_only=True)
+            assert "--from-chapter" not in web_gui.STATE["log"], web_gui.STATE["log"]
+        finally:
+            web_gui.run_metadata = orig_meta
     finally:
         web_gui._worker_command = original
 

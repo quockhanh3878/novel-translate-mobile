@@ -124,6 +124,126 @@ def test_stream_source_index_is_file_position():
         assert [c["_source_index"] for c in out] == [1, 2, 3], out
 
 
+def _old_file(d, titles_):
+    raw = os.path.join(d, "raw.txt")
+    with open(raw, "w", encoding="utf-8") as f:
+        f.write("=== TRUYỆN ===\n\n")
+        for t in titles_:
+            crawler._write_chapter(f, {"title": t, "paragraphs": ["x"]})
+    return raw  # khong co .progress.json, giong file cao tu ban cu
+
+
+def test_adapter_old_file_title_differs_uses_chapter_number():
+    # File cu thieu chuong 3 (4 muc, chuong cuoi la 第5章); ten trong muc luc khac ten da luu.
+    catalog = [{"url": f"https://x/c{i}", "title": f"第{i}章 标题{i}"} for i in range(1, 9)]
+    adapter = FakeAdapter(catalog)
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章　标题1（求票）", "第2章", "第4章", "第5章　标题5（求票）"])
+        assert crawler._adapter_resume_index(raw, catalog, 4, 0, lambda *_: None) == 5
+        fetched = []
+        crawler.crawl_chapter = lambda url, log=print: (fetched.append(url) or {
+            "title": next(c["title"] for c in catalog if c["url"] == url), "paragraphs": ["x"]})
+        run(crawler._crawl_novel_with_adapter, "https://x/c1", raw, adapter, lambda *_: None, None)
+        assert fetched[0] == "https://x/c6", fetched
+        assert titles(raw)[4:] == ["第6章 标题6", "第7章 标题7", "第8章 标题8"], titles(raw)
+
+
+def test_adapter_empty_chapter_skipped_not_stuck():
+    """1 muc muc luc khong co noi dung khong duoc chan ca truyen; nhieu muc lien tiep thi dung."""
+    catalog = [{"url": f"https://x/c{i}", "title": f"第{i}章"} for i in range(1, 10)]
+    adapter = FakeAdapter(catalog)
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章", "第2章"])
+        crawler._save_last_url(raw, "https://x/c2")
+        empty = {"https://x/c3", "https://x/c6", "https://x/c7", "https://x/c8", "https://x/c9"}
+        crawler.crawl_chapter = lambda url, log=print: None if url in empty else {
+            "title": next(c["title"] for c in catalog if c["url"] == url), "paragraphs": ["x"]}
+        run(crawler._crawl_novel_with_adapter, "https://x/c1", raw, adapter, lambda *_: None, None)
+        assert titles(raw) == ["第1章", "第2章", "第4章", "第5章"], titles(raw)
+        assert crawler._load_last_url(raw) == "https://x/c5"
+
+
+def test_legacy_old_file_missing_chapters_no_duplicate():
+    # File cu thieu chuong 3 -> 4 muc nhung chuong cuoi la 第5章 (trang _5). Doan theo so chuong
+    # se tai trang _5 (da co): phai bo qua, khong ghi trung.
+    pages = {n: f"第{n}章" for n in range(1, 8)}
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章", "第2章", "第4章", "第5章"])
+        crawler.crawl_chapter = lambda url, log=print: (
+            lambda n: {"title": pages[n], "paragraphs": ["x"]} if n in pages else None
+        )(int(url.rsplit("_", 1)[1].split(".")[0]))
+        run(crawler.crawl_novel, "https://w/novel_1.html", raw, lambda *_: None, None)
+        assert titles(raw) == ["第1章", "第2章", "第4章", "第5章", "第6章", "第7章"], titles(raw)
+
+
+def test_adapter_volume_restart_picks_nearest_match():
+    # Quyen 2 danh so lai: 第2章 xuat hien 2 lan; file moi co 2 chuong -> la 第2章 cua quyen 1.
+    catalog = [{"url": f"https://x/v{v}c{i}", "title": f"第{i}章"} for v in (1, 2) for i in range(1, 4)]
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章", "第2章"])
+        assert crawler._adapter_resume_index(raw, catalog, 2, 0, lambda *_: None) == 2
+
+
+def test_from_chapter_overrides_saved_position():
+    # Vi tri da luu bi sai (chi vao chuong 2) nhung nguoi dung chon cao tu chuong 6.
+    catalog = [{"url": f"https://x/c{i}", "title": f"第{i}章"} for i in range(1, 9)]
+    catalog.insert(2, {"url": "https://x/notice", "title": "公告"})
+    adapter = FakeAdapter(catalog)
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章", "第2章", "第3章", "第4章"])
+        crawler._save_last_url(raw, "https://x/c2")
+        fetched = []
+        crawler.crawl_chapter = lambda url, log=print: (fetched.append(url) or {
+            "title": next(c["title"] for c in catalog if c["url"] == url), "paragraphs": ["x"]})
+        run(crawler._crawl_novel_with_adapter, "https://x/c1", raw, adapter, lambda *_: None, None, 6)
+        assert fetched[0] == "https://x/c6", fetched
+        assert titles(raw)[4:] == ["第6章", "第7章", "第8章"], titles(raw)
+        # Che do stream (cao + dich): cung bat dau tu chuong chon
+        fetched.clear()
+        crawler.crawl_chapter = lambda url, log=print: (fetched.append(url) or {
+            "title": next(c["title"] for c in catalog if c["url"] == url), "paragraphs": ["x"]})
+        crawler.find_adapter, old_find = (lambda url: adapter), crawler.find_adapter
+        try:
+            run(lambda: list(crawler.crawl_chapters_stream(
+                "https://x/c1", os.path.join(d, "s.txt"), log=lambda *_: None, from_chapter=7)))
+        finally:
+            crawler.find_adapter = old_find
+        assert fetched[0] == "https://x/c7", fetched
+        # Chuong 6 bi xoa khoi muc luc -> lay chuong co so lon hon gan nhat
+        assert crawler._from_chapter_index([c for c in catalog if c["title"] != "第6章"], 6, lambda *_: None) == 6
+        # Muc luc khong danh so -> theo thu tu
+        assert crawler._from_chapter_index([{"url": "a", "title": "x"}] * 5, 3, lambda *_: None) == 2
+
+
+def test_from_chapter_legacy_and_stream():
+    pages = {n: f"第{n}章" for n in range(1, 10)}
+    fetched = []
+
+    def fake(url, log=print):
+        n = int(url.rsplit("_", 1)[1].split(".")[0])
+        fetched.append(n)
+        return {"title": pages[n], "paragraphs": ["x"]} if n in pages else None
+
+    with tempfile.TemporaryDirectory() as d:
+        raw = _old_file(d, ["第1章", "第2章"])
+        crawler.crawl_chapter = fake
+        run(crawler.crawl_novel, "https://w/novel_1.html", raw, lambda *_: None, None, 7)
+        assert fetched[0] == 7 and titles(raw) == ["第1章", "第2章", "第7章", "第8章", "第9章"], (fetched, titles(raw))
+
+        raw2 = os.path.join(d, "s.txt")
+        fetched.clear()
+        crawler.crawl_chapter = fake
+        out = run(lambda: list(crawler.crawl_chapters_stream(
+            "https://w/novel_1.html", raw2, log=lambda *_: None, from_chapter=8)))
+        assert [c["title"] for c in out] == ["第8章", "第9章"] and fetched[0] == 8, (out, fetched)
+
+
+def test_volume_restart_not_skipped():
+    assert not crawler._already_saved("第1章 新卷", crawler._norm_title("第50章"))
+    assert crawler._already_saved("第48章", crawler._norm_title("第50章"))
+    assert not crawler._already_saved("第51章", crawler._norm_title("第50章"))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

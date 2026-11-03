@@ -355,7 +355,7 @@ def _worker_env():
     return env
 
 
-def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir="", crawl_only=False):
+def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, temperature=1.3, allow_peak=False, no_style_detect=False, no_thinking=False, stream_mode=False, chapters=0, reasoning_effort=DEFAULT_REASONING_EFFORT, output_dir="", crawl_only=False, from_chapter=0):
     # Resolve the raw/translation identity before applying an automatically found display title.
     try:
         paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
@@ -405,6 +405,8 @@ def run_pipeline(input_val, title, author="", model=DEFAULT_MODEL, workers=1, te
 
     if paths["is_url"]:
         args += ["--start-url", input_val, "--raw", raw_file]
+        if from_chapter > 0:
+            args += ["--from-chapter", str(from_chapter)]
     else:
         args += ["--raw", raw_file]
     args += ["--translated", translated_file, "--epub", epub_file, "--pdf", pdf_file]
@@ -997,6 +999,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except ValueError:
             chapters = 0
 
+        try:
+            from_chapter = max(0, int(params.get("from_chapter", ["0"])[0].strip() or 0))
+        except ValueError:
+            from_chapter = 0
+
         output_dir = params.get("output_dir", [""])[0].strip()
         if crawl_only and not input_val.lower().startswith(("http://", "https://")):
             candidate = Path(input_val).expanduser()
@@ -1029,7 +1036,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not already_running and input_val:
             threading.Thread(
                 target=run_pipeline,
-                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort, output_dir, crawl_only),
+                args=(input_val, title, author, model, workers, temperature, allow_peak, no_style_detect, no_thinking, stream_mode, chapters, reasoning_effort, output_dir, crawl_only, from_chapter),
                 daemon=True
             ).start()
 

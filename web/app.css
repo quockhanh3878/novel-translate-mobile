@@ -253,6 +253,8 @@ summary:hover { color: var(--accent-cyan); }
 }
 
 .stream-box .hint { margin-left: 28px; }
+.stream-limit.from-chapter-row { margin: 0; }
+.stream-box .from-chapter-row + .hint { margin-left: 0; }
 
 .stream-limit {
     display: flex;

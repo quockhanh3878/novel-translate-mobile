@@ -49,7 +49,8 @@ from pathlib import Path
 
 import requests
 
-from crawler import CHAPTER_SEP, count_chapters, is_novel_title_entry, parse_chapters
+from crawler import (CHAPTER_SEP, count_chapters, is_novel_title_entry, parse_chapters,
+                     source_chapter_number)
 from text_postprocess import postprocess, postprocess_title
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
@@ -1018,38 +1019,6 @@ def _format_chapter_title(raw_title: str, chapter_idx: int | None,
     if subtitle and not _CJK_RE.search(subtitle):
         return f"Chương {chapter_idx}: {subtitle}"
     return f"Chương {chapter_idx}"
-
-
-_CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "兩": 2, "三": 3, "四": 4,
-              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
-_CN_UNITS = {"十": 10, "百": 100, "千": 1000}
-_SOURCE_NUM_RE = re.compile(
-    r"^\s*(?:第\s*([0-9０-９]+|[零〇一二两兩三四五六七八九十百千万萬]+)\s*[章回节節话話]"
-    r"|(?i:chapter)\s*([0-9]+)"
-    r"|([0-9０-９]+)\s*[、.．:：\s])"
-)
-
-
-def _cn_to_int(text: str) -> int:
-    if text.isdigit():
-        return int(text)  # int() doc duoc ca so toan goc ０-９
-    total = section = num = 0
-    for ch in text:
-        if ch in _CN_DIGITS:
-            num = _CN_DIGITS[ch]
-        elif ch in ("万", "萬"):
-            total += (section + num) * 10000
-            section = num = 0
-        else:
-            section += (num or 1) * _CN_UNITS[ch]
-            num = 0
-    return total + section + num
-
-
-def source_chapter_number(raw_title: str) -> int | None:
-    """So chuong ghi trong tieu de goc: '第67章 ...', '第一百零五章', '12、...', 'Chapter 5'."""
-    match = _SOURCE_NUM_RE.match(raw_title or "")
-    return _cn_to_int(next(g for g in match.groups() if g)) if match else None
 
 
 def chapter_labels(titles: list[str]) -> list[int | None]:

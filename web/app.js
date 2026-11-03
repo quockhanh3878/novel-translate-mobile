@@ -671,6 +671,8 @@
         const params = new URLSearchParams();
         new FormData(form).forEach((value, key) => params.append(key, value));
         if (crawlOnly) params.set('mode', 'crawl_only');
+        // Chi dung 1 lan: de lai thi lan chay sau cao trung tu chuong nay.
+        form.elements.from_chapter.value = '';
         try {
             const r = await fetch('/', { method: 'POST', body: params });
             if (!r.ok) throw new Error('Máy chủ trả về mã ' + r.status);

@@ -75,6 +75,8 @@ def main():
     parser = argparse.ArgumentParser(description="Quy trinh: Cao -> Dich DeepSeek -> Validate -> Dong goi EPUB + PDF")
     parser.add_argument("--start-url", default=None,
                          help="URL chuong 1 de cao (bo qua neu da co san --raw)")
+    parser.add_argument("--from-chapter", type=int, default=0,
+                        help="Cao tu chuong so N (bo qua vi tri da luu) - dung khi cao tiep bi ket")
     parser.add_argument("--crawl-only", action="store_true",
                          help="Chi cao va luu file tho, khong can API key va khong dich")
     parser.add_argument("--raw", default=None, help="File tho; mac dinh theo URL, hoac file cu neu khong co URL")
@@ -168,7 +170,8 @@ def main():
 
     if args.crawl_only:
         print("=== Buoc 1/1: Cao truyen (chi luu ban tho) ===")
-        saved = crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
+        saved = crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag,
+                            from_chapter=args.from_chapter)
         prepare_profile(args.raw, translated_file)
         print(f"Da cao va luu {saved} chuong vao: {args.raw}")
         return
@@ -245,6 +248,7 @@ def main():
                 max_chapters=0,
                 should_stop=lambda: _stop_flag,
                 from_start=True,
+                from_chapter=args.from_chapter,
             )
         elif os.path.exists(args.raw):
             chapter_gen = iter_chapters_from_file(args.raw)
@@ -277,7 +281,8 @@ def main():
         )
 
     elif args.start_url:
-        crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag)
+        crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag,
+                    from_chapter=args.from_chapter)
     elif os.path.exists(args.raw):
         print(f"Bo qua cao - da co san {args.raw}.")
     else:
