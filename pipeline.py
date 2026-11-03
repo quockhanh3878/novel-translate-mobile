@@ -51,7 +51,7 @@ from build_pdf import build_pdf
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream, iter_chapters_from_file
 from sources import find_adapter
 from deepseek_translate import (load_dotenv, translate_novel, translate_novel_stream, detect_style_guide,
-                                glossary_path_for, review_glossary,
+                                glossary_path_for, review_glossary, heal_novel,
                                 DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
 from validator import validate_translation
 
@@ -167,6 +167,9 @@ def main():
     trans_dir = os.path.dirname(os.path.abspath(translated_file))
     if raw_dir != trans_dir:
         _check_disk_space(translated_file)
+
+    # Bo chuong trung / sap lai thu tu truoc khi cao tiep (cao tiep doc chuong cuoi trong file).
+    heal_novel(args.raw, translated_file)
 
     if args.crawl_only:
         print("=== Buoc 1/1: Cao truyen (chi luu ban tho) ===")
