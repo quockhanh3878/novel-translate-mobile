@@ -189,16 +189,39 @@ def _check_reject_incomplete_and_preserve_title():
         res = dt.translate_chapter(ch, "sys", "k", "m", 1.0, chapter_idx=1, log=lambda *_: None)
         assert res["title"] == "Chương 1: Đại biến người sống", res["title"]
 
-        # 4) translate_novel khong luu chuong loi va dich lai khi resume
+        # 4) Chuong loi: dich lai QUALITY_RETRIES lan, van loi thi DUNG HAN (khong luu, khong
+        #    dich chuong sau); lan chay sau dich tiep dung tu chuong do.
         with tempfile.TemporaryDirectory() as d:
             raw_p = os.path.join(d, "raw.txt")
             out_p = os.path.join(d, "out.viet.txt")
             with open(raw_p, "w", encoding="utf-8") as f:
                 f.write("=== 第1章 大变活人 ===\n\n第一段。\n\n第二段。\n\n" + "=" * 40 + "\n\n")
-            dt.call_deepseek = lambda *a, **kw: {"title": "Chương 1", "paragraphs": ["Chỉ một đoạn kèm 字."]}
+                f.write("=== 第2章 后续 ===\n\n第三段。\n\n" + "=" * 40 + "\n\n")
+            calls = []
+
+            def flaky(system, user, *a, **kw):
+                calls.append(user)
+                if "第一段" in user:  # chuong 1 luon loi
+                    return {"title": "Chương 1", "paragraphs": ["Chỉ một đoạn kèm 字."]}
+                return {"title": "Tiếp theo", "paragraphs": ["Đoạn ba."]}
+
+            dt.call_deepseek = flaky
             failed = dt.translate_novel(raw_p, out_p, None, "k", style_detect=False,
                                         prepare=False, avoid_peak=False, log=lambda *_: None)
-            assert len(failed) == 1 and dt.count_chapters(out_p) == 0, (failed, dt.count_chapters(out_p))
+            assert [f["index"] for f in failed] == [1], failed
+            assert len(calls) == dt.QUALITY_RETRIES + 1, len(calls)  # chi 3 lan chuong 1, khong dich chuong 2
+            assert dt.count_chapters(out_p) == 0, dt.parse_chapters(out_p)
+
+            # Lan chay sau: dich tiep tu chuong 1
+            calls.clear()
+            dt.call_deepseek = lambda system, user, *a, **kw: (calls.append(1), {
+                "title": "Đại biến" if "第一段" in user else "Tiếp theo",
+                "paragraphs": ["Đoạn một.", "Đoạn hai."] if "第一段" in user else ["Đoạn ba."]})[1]
+            failed = dt.translate_novel(raw_p, out_p, None, "k", style_detect=False,
+                                        prepare=False, avoid_peak=False, log=lambda *_: None)
+            assert failed == [] and len(calls) == 2, (failed, calls)
+            assert [c["title"] for c in dt.parse_chapters(out_p)] == [
+                "Chương 1: Đại biến", "Chương 2: Tiếp theo"]
 
             # Validator canh bao ngay ca khi chi co 1 chu Han hoac lech so doan
             bad_out = os.path.join(d, "bad.viet.txt")

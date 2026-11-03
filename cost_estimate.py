@@ -127,8 +127,11 @@ def estimate_chars(total_chars, chapters, model=DEFAULT_MODEL,
 
 def estimate_file(raw_path, translated_path=None, model=DEFAULT_MODEL,
                   reasoning_effort=DEFAULT_REASONING_EFFORT, no_thinking=False,
-                  peak=False):
-    """Estimate a raw novel file using the shared crawler chapter parser."""
+                  peak=False, web_chapters=None):
+    """Estimate a raw novel file using the shared crawler chapter parser.
+
+    web_chapters: so chuong muc luc web hien co (None = khong biet). Lon hon so chuong
+    trong file thi phan chua cao duoc tinh theo do dai trung binh cua chuong da cao."""
     raw_path = Path(raw_path)
     if not raw_path.is_file():
         return {"available": False, "reason": "Không tìm thấy file thô.", "warnings": []}
@@ -155,12 +158,20 @@ def estimate_file(raw_path, translated_path=None, model=DEFAULT_MODEL,
         else:
             warnings.append("Không thấy file dịch; tính phần còn lại từ đầu.")
 
-    result = _result(sum(chapter_chars), len(chapter_chars), translated_chapters,
+    crawled = len(chapter_chars)
+    total_chapters = crawled
+    uncrawled_chars = 0
+    if web_chapters and int(web_chapters) > crawled:
+        total_chapters = int(web_chapters)
+        uncrawled_chars = round(sum(chapter_chars) / crawled * (total_chapters - crawled))
+        warnings.append("Trang web có %d chương, file thô mới có %d; phần chưa cào ước tính theo "
+                        "độ dài trung bình." % (total_chapters, crawled))
+    result = _result(sum(chapter_chars) + uncrawled_chars, total_chapters, translated_chapters,
                      model=model, reasoning_effort=reasoning_effort,
                      no_thinking=no_thinking, peak=peak, warnings=warnings,
                      translated_path=str(translated_path) if translated_path else None,
-                     remaining_chars_override=sum(chapter_chars[translated_chapters:]),
-                     crawled_chapters=len(chapter_chars))
+                     remaining_chars_override=sum(chapter_chars[translated_chapters:]) + uncrawled_chars,
+                     crawled_chapters=crawled)
     result["raw_path"] = str(raw_path)
     return result
 
@@ -171,15 +182,33 @@ def estimate_file(raw_path, translated_path=None, model=DEFAULT_MODEL,
 SAMPLE_CHAPTERS = 2
 SAMPLE_DELAY_SECONDS = 2.0
 ERROR_CACHE_SECONDS = 60
+# Truyen dang ra van them chuong: muc luc chi duoc nho trong thoi gian ngan.
+CATALOG_CACHE_SECONDS = 300
 _CATALOG_CACHE = {}
 _CATALOG_LOCK = threading.Lock()
+
+
+def _fresh(entry, now):
+    return entry and now() - entry["at"] < (CATALOG_CACHE_SECONDS if entry["ok"] else ERROR_CACHE_SECONDS)
+
+
+def catalog_chapter_count(url, adapter, now=time.time):
+    """So chuong trong muc luc web (chi tai muc luc, khong tai chuong mau); None neu loi."""
+    key = ("count", adapter.catalog_url(url) or url)
+    with _CATALOG_LOCK:
+        cached = _CATALOG_CACHE.get(key)
+        if not _fresh(cached, now):
+            chapters = adapter.list_chapters(url, log=lambda *_: None)
+            cached = {"ok": bool(chapters), "at": now(), "chapters": len(chapters or [])}
+            _CATALOG_CACHE[key] = cached
+        return cached["chapters"] if cached["ok"] else None
 
 
 def _sample_catalog(url, adapter, sleep=time.sleep, now=time.time):
     key = adapter.catalog_url(url) or url
     with _CATALOG_LOCK:
         cached = _CATALOG_CACHE.get(key)
-        if cached and (cached["ok"] or now() - cached["at"] < ERROR_CACHE_SECONDS):
+        if _fresh(cached, now):
             return cached
         chapters = adapter.list_chapters(url, log=lambda *_: None)
         entry = {"ok": False, "at": now(), "reason": "Không đọc được mục lục của trang."}

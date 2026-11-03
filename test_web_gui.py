@@ -97,7 +97,8 @@ def demo():
                 handle.write("legacy raw")
             assert web_gui.resolve_raw_file(url, "Old Display Name") == legacy
             os.remove(legacy)
-            assert web_gui.resolve_raw_file(url, "New Display Name") == stable
+            # Truyen moi: ten file kem ten trang de khong trung truyen cung slug o trang khac.
+            assert web_gui.resolve_raw_file(url, "New Display Name") == "Old Book Name (example.com)_raw.txt"
         finally:
             os.chdir(previous_cwd)
 

@@ -51,6 +51,7 @@ from build_pdf import build_pdf
 from crawler import DEFAULT_OUTPUT, crawl_novel, crawl_chapters_stream, iter_chapters_from_file
 from sources import find_adapter
 from deepseek_translate import (load_dotenv, translate_novel, translate_novel_stream, detect_style_guide,
+                                glossary_path_for, review_glossary,
                                 DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS)
 from validator import validate_translation
 
@@ -303,6 +304,7 @@ def main():
     prepare_profile(args.raw, translated_file)
     print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
     warnings = validate_translation(args.raw, translated_file)
+    review_glossary(args.glossary or glossary_path_for(translated_file))
     if warnings:
         print("\n[CANH BAO] Phat hien van de trong ban dich. Ban co the can kiem tra lai.")
 

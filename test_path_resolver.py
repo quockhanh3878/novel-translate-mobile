@@ -70,8 +70,8 @@ class TestPathResolver(unittest.TestCase):
             res = resolve_pipeline_paths("https://example.com/dau-pha_1.html", title="Đấu Phá", cwd=cwd)
             self.assertTrue(res["is_url"])
             self.assertFalse(res["has_custom_output"])
-            self.assertEqual(res["raw_path"], cwd / "Dau Pha_raw.txt")
-            self.assertEqual(res["translated_path"], cwd / "Dau Pha_raw.txt.viet.txt")
+            self.assertEqual(res["raw_path"], cwd / "Dau Pha (example.com)_raw.txt")
+            self.assertEqual(res["translated_path"], cwd / "Dau Pha (example.com)_raw.txt.viet.txt")
             self.assertEqual(res["epub_path"], cwd / "Đấu Phá.epub")
             self.assertEqual(res["output_dir"], cwd)
             self.assertEqual(res["pdf_path"].parent, cwd)
@@ -96,8 +96,8 @@ class TestPathResolver(unittest.TestCase):
             res = resolve_pipeline_paths("https://example.com/dau-pha_1.html", title="Đấu Phá", output_dir=custom_out, cwd=cwd)
             self.assertTrue(res["is_url"])
             self.assertTrue(res["has_custom_output"])
-            self.assertEqual(res["raw_path"], custom_out.resolve() / "Dau Pha_raw.txt")
-            self.assertEqual(res["translated_path"], custom_out.resolve() / "Dau Pha_raw.txt.viet.txt")
+            self.assertEqual(res["raw_path"], custom_out.resolve() / "Dau Pha (example.com)_raw.txt")
+            self.assertEqual(res["translated_path"], custom_out.resolve() / "Dau Pha (example.com)_raw.txt.viet.txt")
             self.assertEqual(res["epub_path"], custom_out.resolve() / "Đấu Phá.epub")
             self.assertEqual(res["output_dir"], custom_out.resolve())
             self.assertEqual(res["pdf_path"].parent, custom_out.resolve())
@@ -126,6 +126,31 @@ class TestPathResolver(unittest.TestCase):
             # Khi co file cu ten "Tên Cũ_raw.txt" va truyen title="Tên Cũ", uu tien giu file cu
             res = resolve_pipeline_paths(url, title="Tên Cũ", cwd=cwd)
             self.assertEqual(res["raw_path"], legacy)
+
+    def test_same_slug_or_title_on_other_site_gets_own_file(self):
+        import json
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp).resolve()
+            a = "https://www.69shuba.com/book/12345.htm"
+            b = "https://www.biquge.tw/book/12345/"
+            res_a = resolve_pipeline_paths(a, title="Thanh Sơn", cwd=cwd)
+            res_b = resolve_pipeline_paths(b, title="Thanh Sơn", cwd=cwd)
+            self.assertNotEqual(res_a["raw_path"], res_b["raw_path"])
+
+            # File ban cu (chi co ma so / ten truyen) da co ho so cua trang A: link trang B khong duoc dung lai.
+            for old in (cwd / "12345_raw.txt", cwd / "Thanh Sơn_raw.txt"):
+                old.write_text("old", encoding="utf-8")
+                (cwd / f"{old.name}.viet_book.json").write_text(
+                    json.dumps({"source_identity": "https://69shuba.com/book/12345"}), encoding="utf-8")
+                self.assertEqual(resolve_pipeline_paths(a, title="Thanh Sơn", cwd=cwd)["raw_path"], old)
+                self.assertEqual(resolve_pipeline_paths(b, title="Thanh Sơn", cwd=cwd)["raw_path"], res_b["raw_path"])
+                old.unlink()
+                (cwd / f"{old.name}.viet_book.json").unlink()
+
+            # File ban cu chua co ho so van duoc dung lai de cao tiep.
+            old = cwd / "12345_raw.txt"
+            old.write_text("old", encoding="utf-8")
+            self.assertEqual(resolve_pipeline_paths(b, cwd=cwd)["raw_path"], old)
 
     def test_guess_title_and_resolve_consistent_package_names(self):
         from crawler import guess_title

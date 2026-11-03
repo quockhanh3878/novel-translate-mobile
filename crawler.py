@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 import sys
@@ -200,12 +201,91 @@ def crawl_chapter(url, log=print, session=None):
         return False  # Indication to retry or pause
 
 
-def _write_chapter(file_handle, result):
+def _write_chapter(file_handle, result, source_url=""):
     file_handle.write(f"=== {result['title']} ===\n\n")
     for para in result['paragraphs']:
         file_handle.write(f"{para}\n\n")
     file_handle.write(CHAPTER_SEP)
     file_handle.flush()
+    if source_url:
+        _save_last_url(file_handle.name, source_url)
+
+
+# --- Vi tri cao that (link chuong cuoi da luu) -------------------------------------
+# Khong suy vi tri tu so chuong trong file: muc luc / chi so _N.html khong 1-1 voi so
+# chuong (trang thong bao, so bi nhay, bat dau tu giua truyen), dem lech thi cao tiep
+# se bo sot hoac trung chuong. Luu link chuong cuoi vao file ben canh file tho.
+
+def _progress_path(output_file):
+    return str(output_file) + ".progress.json"
+
+
+def _load_last_url(output_file):
+    try:
+        with open(_progress_path(output_file), encoding="utf-8") as f:
+            return str(json.load(f).get("last_url") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def _save_last_url(output_file, url):
+    path = _progress_path(output_file)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"last_url": url}, f, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def _norm_title(title):
+    return re.sub(r"\s+", "", title or "")
+
+
+def _last_saved_title(output_file):
+    if not os.path.exists(output_file):
+        return ""
+    last = ""
+    for chapter in iter_chapters_from_file(output_file):
+        last = chapter["title"]
+    return _norm_title(last)
+
+
+def _url_key(url):
+    return (url or "").rstrip("/").split("?")[0]
+
+
+def _adapter_resume_index(output_file, chapters, existing, requested_index, log):
+    """Chi so muc luc cua chuong tiep theo can cao."""
+    if not existing:
+        return requested_index
+    last_url = _load_last_url(output_file)
+    if last_url:
+        for index, chapter in enumerate(chapters):
+            if _url_key(chapter["url"]) == _url_key(last_url):
+                return index + 1
+        log(f"Khong thay link chuong da luu cuoi trong muc luc: {last_url}")
+    # File cao tu ban cu chua co file vi tri: doi ten chuong cuoi voi muc luc.
+    last_title = _last_saved_title(output_file)
+    matches = [i for i, ch in enumerate(chapters) if last_title and _norm_title(ch["title"]) == last_title]
+    if matches:
+        return matches[-1] + 1
+    log(f"CANH BAO: khong xac dinh duoc vi tri da cao, tiep tuc theo so chuong ({existing}) - co the lech.")
+    return existing
+
+
+def _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num, log):
+    """So _N.html tiep theo can cao (duong cao khong co adapter)."""
+    if not existing:
+        return url_chapter_num
+    match = re.match(r"(.*_)(\d+)(\.html?)$", _load_last_url(output_file))
+    if match and match.group(1) == base_url and match.group(3) == suffix:
+        return int(match.group(2)) + 1
+    log(f"CANH BAO: chua co file vi tri da cao, tiep tuc theo so chuong ({existing}) - co the lech.")
+    return existing + 1
+
+
+# Duong cao khong co adapter: chi so _N.html co the bi nhay (trang bi xoa). Gap 404 thi
+# thu tiep vai chi so roi moi coi la het truyen.
+# ponytail: co dinh 3, tang len neu nguon nhay so nhieu hon.
+MAX_MISSING_INDEXES = 3
 
 
 def _adapter_start_index(adapter, start_url, chapters, log):
@@ -233,7 +313,8 @@ def _crawl_novel_with_adapter(start_url, output_file, adapter, log, should_stop)
 
     existing = count_chapters(output_file)
     requested_index = _adapter_start_index(adapter, start_url, chapters, log)
-    chapter_index = existing if existing else requested_index
+    chapter_index = _adapter_resume_index(output_file, chapters, existing, requested_index, log)
+    last_title = _last_saved_title(output_file) if existing else ""
     if existing:
         log(f"Da co {existing} chuong trong {output_file}, tiep tuc tu chuong {chapter_index + 1}.")
     if chapter_index >= len(chapters):
@@ -266,7 +347,14 @@ def _crawl_novel_with_adapter(start_url, output_file, adapter, log, should_stop)
                 continue
 
             consecutive_errors = 0
-            _write_chapter(f, result)
+            if saved == 0 and last_title and _norm_title(result["title"]) == last_title:
+                # Lan truoc dung ngay sau khi ghi chuong, truoc khi kip luu vi tri.
+                log(f"Chuong {chapter_index + 1} da co trong file, bo qua.")
+                _save_last_url(output_file, chapter["url"])
+                last_title = ""
+                chapter_index += 1
+                continue
+            _write_chapter(f, result, chapter["url"])
             log(f"Da luu chuong {chapter_index + 1}: {result['title']}")
             saved += 1
             chapter_index += 1
@@ -294,7 +382,9 @@ def _crawl_stream_with_adapter(start_url, output_file, max_chapters, adapter, lo
 
     existing = len(existing_chapters) if from_start else count_chapters(output_file)
     requested_index = _adapter_start_index(adapter, start_url, chapters, log)
-    chapter_index = max(existing, requested_index) if from_start else (existing if existing else requested_index)
+    resume_index = _adapter_resume_index(output_file, chapters, existing, requested_index, log)
+    chapter_index = max(resume_index, requested_index) if from_start else resume_index
+    last_title = _last_saved_title(output_file) if existing else ""
     if existing:
         if from_start:
             log(f"Da co {existing} chuong trong file tho, kiem tra tu chuong 1 truoc khi cao tiep.")
@@ -333,12 +423,19 @@ def _crawl_stream_with_adapter(start_url, output_file, max_chapters, adapter, lo
                 continue
 
             consecutive_errors = 0
-            _write_chapter(f, result)
+            if saved == 0 and last_title and _norm_title(result["title"]) == last_title:
+                log(f"Chuong {chapter_index + 1} da co trong file, bo qua.")
+                _save_last_url(output_file, chapter["url"])
+                last_title = ""
+                chapter_index += 1
+                continue
+            _write_chapter(f, result, chapter["url"])
             log(f"[Cao] Chuong {chapter_index + 1}: {result['title']}")
             saved += 1
             chapter_index += 1
             streamed = dict(result)
-            streamed["_source_index"] = chapter_index
+            # Vi tri trong file tho, cung cach danh so voi cac chuong da co (iter_chapters_from_file).
+            streamed["_source_index"] = existing + saved
             yield streamed
 
             if chapter_index < len(chapters):
@@ -346,11 +443,10 @@ def _crawl_stream_with_adapter(start_url, output_file, max_chapters, adapter, lo
 
 
 def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -> int:
-    """Cao tuan tu tu chuong dau con thieu, tang so chuong trong URL len 1 moi lan, den
-    khi gap 404. Neu output_file da co san N chuong (vd chay lan truoc bi dung giua
-    chung), TU DONG tiep tuc tu chuong N+1 bat ke so chuong ghi trong start_url - chi
-    dung start_url de suy ra mau URL (base_url/suffix), khong dung de xac dinh diem
-    bat dau, tranh cao trung lap khi resume. Tra ve so chuong cao them trong lan nay."""
+    """Cao tuan tu, tang so trang _N trong URL len 1 moi lan, den khi gap lien tiep hon
+    MAX_MISSING_INDEXES trang khong ton tai. Neu output_file da co chuong, TU DONG tiep
+    tuc ngay sau link chuong cuoi da luu (file .progress.json canh file tho), khong suy
+    tu so chuong trong file. Tra ve so chuong cao them trong lan nay."""
     start_url = start_url.strip().rstrip('.')
     adapter = find_adapter(start_url)
     if adapter:
@@ -362,11 +458,13 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
 
     base_url, url_chapter_num, suffix = match.group(1), int(match.group(2)), match.group(3)
     existing = count_chapters(output_file)
-    chapter_num = existing + 1 if existing else url_chapter_num
+    chapter_num = _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num, log)
+    last_title = _last_saved_title(output_file) if existing else ""
     if existing:
-        log(f"Da co {existing} chuong trong {output_file}, tiep tuc tu chuong {chapter_num}.")
+        log(f"Da co {existing} chuong trong {output_file}, tiep tuc tu trang _{chapter_num}.")
 
     consecutive_errors = 0
+    missing = 0
     saved = 0
 
     log(f"Bat dau cao tu chuong {chapter_num} vao {output_file}...")
@@ -376,11 +474,17 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
             f.write("=== TRUYỆN ===\n\n")
 
         while True:
-            result = crawl_chapter(f"{base_url}{chapter_num}{suffix}", log=log)
+            page_url = f"{base_url}{chapter_num}{suffix}"
+            result = crawl_chapter(page_url, log=log)
 
             if result is None:
-                log(f"Da cao xong {saved} chuong.")
-                break
+                missing += 1
+                if missing > MAX_MISSING_INDEXES:
+                    log(f"Da cao xong {saved} chuong.")
+                    break
+                log(f"Khong co trang _{chapter_num}, thu trang tiep theo.")
+                chapter_num += 1
+                continue
 
             if result is False:
                 consecutive_errors += 1
@@ -392,12 +496,15 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None) -
                 continue
 
             consecutive_errors = 0
+            missing = 0
+            if saved == 0 and last_title and _norm_title(result["title"]) == last_title:
+                log(f"Trang _{chapter_num} da co trong file, bo qua.")
+                _save_last_url(output_file, page_url)
+                last_title = ""
+                chapter_num += 1
+                continue
 
-            f.write(f"=== {result['title']} ===\n\n")
-            for para in result['paragraphs']:
-                f.write(f"{para}\n\n")
-            f.write(CHAPTER_SEP)
-            f.flush()
+            _write_chapter(f, result, page_url)
 
             log(f"Da luu chuong {chapter_num}: {result['title']}")
             saved += 1
@@ -440,14 +547,17 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
         yield chapter
 
     existing = len(existing_chapters) if from_start else count_chapters(output_file)
-    chapter_num = max(existing + 1, url_chapter_num) if from_start else (existing + 1 if existing else url_chapter_num)
+    resume_num = _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num, log)
+    chapter_num = max(resume_num, url_chapter_num) if from_start else resume_num
+    last_title = _last_saved_title(output_file) if existing else ""
     if existing:
         if from_start:
             log(f"Da co {existing} chuong trong file tho, kiem tra tu chuong 1 truoc khi cao tiep.")
         else:
-            log(f"Da co {existing} chuong, tiep tuc tu chuong {chapter_num}.")
+            log(f"Da co {existing} chuong, tiep tuc tu trang _{chapter_num}.")
 
     consecutive_errors = 0
+    missing = 0
     saved = 0
     limit_info = f" (gioi han {max_chapters} chuong)" if max_chapters > 0 and not from_start else ""
     log(f"Bat dau cao tu chuong {chapter_num}{limit_info}...")
@@ -465,11 +575,17 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
                 log("Da dung theo yeu cau.")
                 break
 
-            result = crawl_chapter(f"{base_url}{chapter_num}{suffix}", log=log)
+            page_url = f"{base_url}{chapter_num}{suffix}"
+            result = crawl_chapter(page_url, log=log)
 
             if result is None:
-                log(f"Da cao xong {saved} chuong (het truyen).")
-                break
+                missing += 1
+                if missing > MAX_MISSING_INDEXES:
+                    log(f"Da cao xong {saved} chuong (het truyen).")
+                    break
+                log(f"Khong co trang _{chapter_num}, thu trang tiep theo.")
+                chapter_num += 1
+                continue
 
             if result is False:
                 consecutive_errors += 1
@@ -481,19 +597,22 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
                 continue
 
             consecutive_errors = 0
+            missing = 0
+            if saved == 0 and last_title and _norm_title(result["title"]) == last_title:
+                log(f"Trang _{chapter_num} da co trong file, bo qua.")
+                _save_last_url(output_file, page_url)
+                last_title = ""
+                chapter_num += 1
+                continue
 
-            f.write(f"=== {result['title']} ===\n\n")
-            for para in result['paragraphs']:
-                f.write(f"{para}\n\n")
-            f.write(CHAPTER_SEP)
-            f.flush()
+            _write_chapter(f, result, page_url)
 
             log(f"[Cao] Chuong {chapter_num}: {result['title']}")
             saved += 1
             chapter_num += 1
 
             streamed = dict(result)
-            streamed["_source_index"] = chapter_num - 1
+            streamed["_source_index"] = existing + saved
             yield streamed  # Giao ngay cho pipeline de dich
 
             time.sleep(random.uniform(2.0, 5.0))  # Polite crawling delay

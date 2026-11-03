@@ -23,7 +23,7 @@ import requests
 
 from build_epub import build_epub
 from build_pdf import build_pdf
-from cost_estimate import estimate_catalog, estimate_file, usd_from_usage
+from cost_estimate import catalog_chapter_count, estimate_catalog, estimate_file, usd_from_usage
 from sources import find_adapter, parse_saved_chapter_html
 from crawler import guess_title
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
@@ -724,10 +724,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             return {"available": False, "reason": f"Đường dẫn file không hợp lệ: {exc}"}
 
+        web_chapters = None
         if paths["is_url"]:
             raw_path = paths["raw_path"]
+            adapter = find_adapter(input_value)
+            if raw_path.is_file() and adapter and adapter.catalog_url(input_value):
+                web_chapters = catalog_chapter_count(input_value, adapter)
             if not raw_path.is_file():
-                adapter = find_adapter(input_value)
                 if adapter and adapter.catalog_url(input_value):
                     return estimate_catalog(input_value, adapter, model=model, reasoning_effort=effort,
                                             no_thinking=no_thinking,
@@ -745,7 +748,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         peak = bool(allow_peak and is_peak_hour())
         return estimate_file(raw_path, translated_path if translated_path.is_file() else None,
                              model=model, reasoning_effort=effort,
-                             no_thinking=no_thinking, peak=peak)
+                             no_thinking=no_thinking, peak=peak, web_chapters=web_chapters)
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)

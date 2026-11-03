@@ -9,7 +9,7 @@ import zipfile
 
 import build_epub as build_epub_module
 import deepseek_translate
-from crawler import CHAPTER_SEP, count_chapters, is_novel_title_entry, parse_chapters
+from crawler import CHAPTER_SEP, count_chapters, is_novel_title_entry, iter_chapters_from_file, parse_chapters
 from validator import validate_translation
 
 
@@ -193,7 +193,7 @@ def demo_stream():
         legacy = os.path.join(directory, "legacy.txt")
         write_chapter(legacy, "Chương 1", ["Bản dịch 1."])
         write_chapter(legacy, "Chương 2", ["Bản dịch 2."])
-        indexes = run_stream(raw_path, legacy, iter(real[2:]))
+        indexes = run_stream(raw_path, legacy, iter_chapters_from_file(raw_path))
         assert indexes == [3], indexes
         assert [c["title"] for c in parse_chapters(legacy)] == ["Chương 1", "Chương 2", "Chương 3"]
 

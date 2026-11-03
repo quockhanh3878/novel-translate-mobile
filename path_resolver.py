@@ -15,6 +15,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 # Cac ky tu cam trong ten file tren he dieu hanh Windows
@@ -73,6 +74,26 @@ def validate_output_dir(dir_path: str | Path | None, create: bool = True) -> tup
     return True, resolved, ""
 
 
+def _source_identity(url: str) -> str:
+    try:
+        from novel_metadata import source_identity
+        return source_identity(url)
+    except Exception:
+        return ""
+
+
+def _belongs_to(raw_file: Path, target_dir: Path, identity: str) -> bool:
+    """File tho chua co ho so (ban cu) hoac ho so cung nguon thi la cua truyen nay."""
+    if not identity:
+        return True
+    try:
+        from novel_metadata import load_profile
+        saved = load_profile(target_dir / f"{raw_file.name}.viet.txt").get("source_identity")
+    except Exception:
+        return True  # ho so hong: de buoc metadata bao loi ro rang
+    return not saved or saved == identity
+
+
 def resolve_pipeline_paths(
     input_val: str,
     title: str = "",
@@ -119,18 +140,16 @@ def resolve_pipeline_paths(
             url_slug = guess_title(input_trimmed)
         except Exception:
             url_slug = safe_title
-        url_name = f"{sanitize_filename(url_slug)}_raw.txt"
-        target_url_file = target_dir / url_name
-
-        if target_url_file.is_file():
-            raw_path = target_url_file
-        else:
-            legacy_name = f"{safe_title}_raw.txt" if title.strip() else ""
-            target_legacy_file = target_dir / legacy_name if legacy_name else None
-            if target_legacy_file and target_legacy_file != target_url_file and target_legacy_file.is_file():
-                raw_path = target_legacy_file
-            else:
-                raw_path = target_url_file
+        # Ten file kem ten trang: cung slug/ma so o hai trang khac nhau la hai truyen khac nhau.
+        identity = _source_identity(input_trimmed)
+        site = urlsplit(identity).hostname or ""
+        slug_name = sanitize_filename(url_slug)
+        new_file = target_dir / (f"{slug_name} ({site})_raw.txt" if site else f"{slug_name}_raw.txt")
+        candidates = [new_file, target_dir / f"{slug_name}_raw.txt"]
+        if title.strip():
+            candidates.append(target_dir / f"{safe_title}_raw.txt")
+        # File cua phien ban cu (chi co slug hoac ten truyen) chi dung lai khi dung la truyen nay.
+        raw_path = next((p for p in candidates if p.is_file() and _belongs_to(p, target_dir, identity)), new_file)
     else:
         raw_p = Path(input_trimmed).expanduser()
         if not raw_p.is_absolute():

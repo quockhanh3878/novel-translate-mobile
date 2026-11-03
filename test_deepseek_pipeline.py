@@ -186,7 +186,7 @@ def demo():
 
         def fake_crawl_chapter(url, log=print):
             fetched_urls.append(url)
-            return None  # gia lap 404 -> dung cao ngay
+            return None  # gia lap 404 -> thu them vai trang roi dung
 
         crawler.crawl_chapter = fake_crawl_chapter
         try:
@@ -194,7 +194,8 @@ def demo():
         finally:
             crawler.crawl_chapter = orig_crawl_chapter
 
-        assert fetched_urls == ["https://example.com/novel_3.html"], fetched_urls
+        expected = [f"https://example.com/novel_{n}.html" for n in range(3, 4 + crawler.MAX_MISSING_INDEXES)]
+        assert fetched_urls == expected, fetched_urls
 
     # Gio cao diem DeepSeek: 9-12h va 14-18h gio Bac Kinh. Dung datetime co dinh
     # (khong dung datetime.now() that) de test khong bi flaky/treo theo dong ho may.

@@ -283,7 +283,7 @@ def test_legacy_url_path():
         crawler.crawl_chapter = old_crawl
         crawler.time.sleep = old_sleep
 
-    assert fetched == ["https://example.com/novel_3.html"]
+    assert fetched == [f"https://example.com/novel_{n}.html" for n in range(3, 4 + crawler.MAX_MISSING_INDEXES)]
 
 
 def test_bgq99_adapter():

@@ -228,6 +228,30 @@ def test_catalog_estimate():
     assert broken.calls["list"] == 2, broken.calls
     cost_estimate._CATALOG_CACHE.clear()
 
+    # muc luc doc thanh cong cung chi nho ngan han: truyen dang ra van them chuong
+    counter = FakeAdapter()
+    counter.calls = {"list": 0, "crawl": 0}
+    clock = [1000.0]
+    assert cost_estimate.catalog_chapter_count("https://fake.test/book/1/", counter, now=lambda: clock[0]) == 100
+    cost_estimate.catalog_chapter_count("https://fake.test/book/1/", counter, now=lambda: clock[0])
+    assert counter.calls == {"list": 1, "crawl": 0}, counter.calls
+    clock[0] += cost_estimate.CATALOG_CACHE_SECONDS + 1
+    cost_estimate.catalog_chapter_count("https://fake.test/book/1/", counter, now=lambda: clock[0])
+    assert counter.calls == {"list": 2, "crawl": 0}, counter.calls
+    cost_estimate._CATALOG_CACHE.clear()
+
+    # da co file tho nhung web nhieu chuong hon: tong so chuong theo web, phan chua cao tinh vao chi phi
+    with tempfile.TemporaryDirectory() as work:
+        raw = Path(work) / "raw.txt"
+        raw.write_text("=== TRUYỆN ===\n\n" + "".join(
+            "=== c%d ===\n\n%s\n\n%s\n\n" % (i, "x" * 1000, "=" * 40) for i in range(3)), encoding="utf-8")
+        local = cost_estimate.estimate_file(raw)
+        web = cost_estimate.estimate_file(raw, web_chapters=5)
+        assert (local["crawled_chapters"], local["chapters"]) == (3, 3), local
+        assert (web["crawled_chapters"], web["chapters"]) == (3, 5), web
+        assert web["total_chars"] == 5000 and web["remaining_chars"] == 5000, web
+        assert any("Trang web có 5 chương" in w for w in web["warnings"]), web
+
 
 def main():
     with tempfile.TemporaryDirectory() as work:

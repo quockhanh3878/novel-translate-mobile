@@ -23,7 +23,7 @@ from tkinter import ttk, messagebox, filedialog
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_novel, guess_title
-from path_resolver import sanitize_filename
+from path_resolver import resolve_pipeline_paths, sanitize_filename
 from deepseek_translate import (load_dotenv, load_glossary, save_glossary, translate_novel,
                                 glossary_path_for)
 from build_epub import build_epub, ensure_packaged
@@ -245,8 +245,8 @@ class AppGUI(tk.Tk):
         if not url or url == DEFAULT_START_URL:
             return
         guessed = guess_title(url)
-        safe_slug = sanitize_filename(guessed)
-        new_raw = f"{safe_slug}_raw.txt"
+        # Cung quy tac dat ten voi giao dien web (ten file kem ten trang).
+        new_raw = resolve_pipeline_paths(url)["raw_path"].name
         new_translated = f"{new_raw}.viet.txt"
         cur_raw = self.ent_raw.get().strip()
         cur_trans = self.ent_translated.get().strip()
