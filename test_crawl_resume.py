@@ -216,7 +216,10 @@ def test_from_chapter_overrides_saved_position():
 
 
 def test_from_chapter_legacy_and_stream():
-    pages = {n: f"第{n}章" for n in range(1, 10)}
+    # Giong wa01: trang _N lech so chuong (第13章 o trang _25), co trang thong bao xen giua.
+    pages = {p: f"第{p - 12}章" for p in range(13, 31)}
+    pages[20] = "公告"
+    pages.update({p: f"第{p - 13}章" for p in range(21, 31)})
     fetched = []
 
     def fake(url, log=print):
@@ -225,17 +228,26 @@ def test_from_chapter_legacy_and_stream():
         return {"title": pages[n], "paragraphs": ["x"]} if n in pages else None
 
     with tempfile.TemporaryDirectory() as d:
+        # Khong co file vi tri: doan trang _13, do theo do lech toi trang _25
         raw = _old_file(d, ["第1章", "第2章"])
         crawler.crawl_chapter = fake
-        run(crawler.crawl_novel, "https://w/novel_1.html", raw, lambda *_: None, None, 7)
-        assert fetched[0] == 7 and titles(raw) == ["第1章", "第2章", "第7章", "第8章", "第9章"], (fetched, titles(raw))
+        run(crawler.crawl_novel, "https://w/novel_1.html", raw, lambda *_: None, None, 12)
+        assert titles(raw)[2:5] == ["第12章", "第13章", "第14章"], (fetched, titles(raw))
+        assert fetched[:5] == [12, 13, 24, 25, 25], fetched  # 3 trang do tim roi cao tu _25
 
+        # Co file vi tri (第1章 o _13): doan theo do lech, do them 1 trang vi thong bao xen giua
         raw2 = os.path.join(d, "s.txt")
+        with open(raw2, "w", encoding="utf-8") as f:
+            crawler._write_chapter(f, {"title": "第1章", "paragraphs": ["x"]})
+        crawler._save_last_url(raw2, "https://w/novel_13.html")
         fetched.clear()
         crawler.crawl_chapter = fake
         out = run(lambda: list(crawler.crawl_chapters_stream(
-            "https://w/novel_1.html", raw2, log=lambda *_: None, from_chapter=8)))
-        assert [c["title"] for c in out] == ["第8章", "第9章"] and fetched[0] == 8, (out, fetched)
+            "https://w/novel_1.html", raw2, log=lambda *_: None, from_chapter=16)))
+        assert fetched[:3] == [28, 29, 29] and [c["title"] for c in out] == ["第16章", "第17章"], (out, fetched)
+
+        # Chuong khong ton tai (bi xoa / so qua lon) -> khong cao trang _99 bua
+        assert crawler._legacy_page_for_chapter(raw, "https://w/novel_", ".html", 99, lambda *_: None) == 99
 
 
 def test_volume_restart_not_skipped():

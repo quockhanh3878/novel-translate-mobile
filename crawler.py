@@ -337,6 +337,46 @@ def _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num,
     return existing + 1
 
 
+# ponytail: do toi da 12 trang; so trang lech so chuong it va deu (trang thong bao xen giua)
+# nen moi lan nhay dung bang do lech la toi gan dich. Tang len neu nguon lech lon va loan.
+LOCATE_MAX_PAGES = 12
+
+
+def _legacy_page_for_chapter(output_file, base_url, suffix, number, log):
+    """Trang _N.html chua chuong co so goc `number` (第813章 o trang _825). Doan tu do lech
+    giua trang va so chuong cua chuong cuoi da luu, roi tai thu va nhay theo do lech."""
+    page = number
+    match = re.match(r"(.*_)(\d+)(\.html?)$", _load_last_url(output_file))
+    last_num = source_chapter_number(_last_saved_title(output_file))
+    if match and match.group(1) == base_url and last_num:
+        page = number + int(match.group(2)) - last_num
+    seen, after = set(), None  # after: trang co so lon hon gan nhat (chuong `number` bi xoa)
+    for _ in range(LOCATE_MAX_PAGES):
+        if page < 1 or page in seen:
+            break
+        seen.add(page)
+        result = crawl_chapter(f"{base_url}{page}{suffix}", log=log)
+        if result is False:
+            break
+        num = source_chapter_number(result["title"]) if result else None
+        if num == number:
+            log(f"Chuong {number} o trang _{page}: {result['title']}")
+            return page
+        if num and num > number and (after is None or num < after[1]):
+            after = (page, num)
+        if result is None:
+            page += -1 if after else 1  # da thay chuong lon hon: qua cuoi truyen; chua: truoc trang dau
+        elif num is None:
+            page += 1  # trang thong bao
+        else:
+            page += number - num
+    if after:
+        log(f"Khong co chuong {number}, cao tu chuong {after[1]} (trang _{after[0]}).")
+        return after[0]
+    log(f"CANH BAO: khong tim thay trang cua chuong {number}, cao tu trang _{number}.")
+    return number
+
+
 # Duong cao khong co adapter: chi so _N.html co the bi nhay (trang bi xoa). Gap 404 thi
 # thu tiep vai chi so roi moi coi la het truyen.
 # ponytail: co dinh 3, tang len neu nguon nhay so nhieu hon.
@@ -536,8 +576,8 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None, f
     """Cao tuan tu, tang so trang _N trong URL len 1 moi lan, den khi gap lien tiep hon
     MAX_MISSING_INDEXES trang khong ton tai. Neu output_file da co chuong, TU DONG tiep
     tuc ngay sau link chuong cuoi da luu (file .progress.json canh file tho), khong suy
-    tu so chuong trong file. from_chapter > 0: bo qua vi tri da luu, cao tu chuong do (duong
-    _N.html: tu trang _from_chapter). Tra ve so chuong cao them trong lan nay."""
+    tu so chuong trong file. from_chapter > 0: bo qua vi tri da luu, cao tu chuong co so goc
+    do trong tieu de (duong _N.html: do tim trang chua chuong do, khong lay trang _from_chapter). Tra ve so chuong cao them trong lan nay."""
     start_url = start_url.strip().rstrip('.')
     adapter = find_adapter(start_url)
     if adapter:
@@ -551,8 +591,7 @@ def crawl_novel(start_url: str, output_file: str, log=print, should_stop=None, f
     existing = count_chapters(output_file)
     chapter_num = _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num, log)
     if from_chapter:
-        chapter_num = from_chapter
-        log(f"Cao tu trang _{chapter_num} theo yeu cau.")
+        chapter_num = _legacy_page_for_chapter(output_file, base_url, suffix, from_chapter, log)
     last_title = _last_saved_title(output_file) if existing else ""
     if existing:
         log(f"Da co {existing} chuong trong {output_file}, tiep tuc tu trang _{chapter_num}.")
@@ -643,8 +682,7 @@ def crawl_chapters_stream(start_url: str, output_file: str, max_chapters: int = 
     resume_num = _legacy_resume_num(output_file, base_url, suffix, existing, url_chapter_num, log)
     chapter_num = max(resume_num, url_chapter_num) if from_start else resume_num
     if from_chapter:
-        chapter_num = from_chapter
-        log(f"Cao tu trang _{chapter_num} theo yeu cau.")
+        chapter_num = _legacy_page_for_chapter(output_file, base_url, suffix, from_chapter, log)
     last_title = _last_saved_title(output_file) if existing else ""
     if existing:
         if from_start:
