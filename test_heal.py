@@ -145,6 +145,50 @@ def test_auto_fix_report_and_package_dedupe():
     print("PASS nut tu sua doi chieu + dong goi bo chuong trung + dong goi theo dot")
 
 
+def test_replace_chapters_retranslates_only_changed():
+    with tempfile.TemporaryDirectory() as d:
+        raw, out = os.path.join(d, "raw.txt"), os.path.join(d, "raw.txt.viet.txt")
+        write(raw, [raw_ch(1), raw_ch(2), raw_ch(3), raw_ch(4)])
+        write(out, [tr_ch(1), tr_ch(2), tr_ch(3)], head="Truyện", head_sep=True)
+        # Chuong 2 doi noi dung (dich lai), chuong 3 giong het (giu ban dich), chuong 6 moi (them vao cuoi)
+        new = [{"title": "第2章", "paragraphs": ["Dung 2a", "Dung 2b"]},
+               {"title": "第3章", "paragraphs": ["原文3a", "原文3b"]},
+               {"title": "第6章", "paragraphs": ["原文6a"]}]
+        r = dt.replace_chapters(raw, out, new, log=lambda *_: None)
+        assert r["replaced"] == 1 and r["appended"] == 1 and r["kept"] == 1 and r["stashed"] == 1, r
+        assert titles(out) == ["Truyện", "Chương 1: Ten 1"], titles(out)  # ban dich chuong 2 da bo
+        assert os.path.exists(raw + ".truoc-nap.bak") and os.path.exists(out + ".truoc-nap.bak")
+
+        calls, original = [], dt.translate_chapter
+        dt.translate_chapter = fake_api(calls)
+        try:
+            dt.translate_novel(raw, out, None, "k", style_detect=False, prepare=False,
+                               avoid_peak=False, log=lambda *_: None)
+        finally:
+            dt.translate_chapter = original
+        assert calls == ["第2章", "第4章", "第6章"], calls  # chuong 3 lay tu kho, khong goi API
+        chapters = parse_chapters(out)
+        assert [c["title"] for c in chapters] == ["Truyện", "Chương 1: Ten 1", "Chương 2: Moi",
+                                                  "Chương 3: Ten 3", "Chương 4: Moi", "Chương 6: Moi"], chapters
+        assert chapters[3]["paragraphs"] == ["Viet 3a", "Viet 3b"]
+        assert not os.path.exists(dt._stash_path(out))
+    print("PASS nap chuong sua: chi dich lai chuong doi, chuong giong het giu ban dich")
+
+
+def test_replace_identical_chapter_is_noop():
+    with tempfile.TemporaryDirectory() as d:
+        raw, out = os.path.join(d, "raw.txt"), os.path.join(d, "raw.txt.viet.txt")
+        write(raw, [raw_ch(1), raw_ch(2)])
+        write(out, [tr_ch(1)], head="Truyện", head_sep=True)
+        before = open(raw, encoding="utf-8").read(), open(out, encoding="utf-8").read()
+        r = dt.replace_chapters(raw, out, [{"title": "第2章", "paragraphs": ["原文2a", "原文2b"]}],
+                                log=lambda *_: None)
+        assert r["replaced"] == 0 and r["appended"] == 0 and not r["healed"], r
+        assert (open(raw, encoding="utf-8").read(), open(out, encoding="utf-8").read()) == before
+        assert not os.path.exists(raw + ".truoc-nap.bak")
+    print("PASS nap chuong trung noi dung: khong ghi, khong sao luu")
+
+
 if __name__ == "__main__":
     test_auto_fix_report_and_package_dedupe()
     test_heal_duplicates_and_order_then_translate_only_missing()
@@ -152,3 +196,5 @@ if __name__ == "__main__":
     test_translate_novel_heals_by_itself()
     test_volume_restart_only_dedup()
     test_mismatched_translation_not_touched()
+    test_replace_chapters_retranslates_only_changed()
+    test_replace_identical_chapter_is_noop()

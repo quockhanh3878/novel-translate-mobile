@@ -44,7 +44,7 @@ def _handle_sigterm(signum, frame):
 signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
-from build_epub import build_epub, ensure_packaged, is_package_up_to_date, package_due
+from build_epub import build_epub, ensure_packaged, package_due
 from novel_metadata import run_metadata, prepare_profile
 from path_resolver import resolve_pipeline_paths, sanitize_filename
 from build_pdf import build_pdf
@@ -147,23 +147,8 @@ def main():
     # (neu sua sau thi ban vua dong goi la ban cu, phai dong goi lai).
     heal_novel(args.raw, translated_file)
 
-    # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB/PDF ngay luon
-    # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi (bo qua neu da co san file cap nhat).
-    if not args.crawl_only and os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
-        from crawler import count_chapters as _count_vi
-        existing_count = _count_vi(translated_file)
-        if existing_count > 0:
-            if (is_package_up_to_date(translated_file, epub_path, args.title, args.author)
-                    and is_package_up_to_date(translated_file, pdf_path, args.title, args.author)):
-                print(f"[EPUB/PDF] Da co san file dong goi cho {existing_count} chuong: {epub_path} va {pdf_path}, bo qua dong goi trung.")
-            else:
-                print(f"[EPUB/PDF] Phat hien {existing_count} chuong da dich co san, dang dong goi nguon...")
-                try:
-                    ensure_packaged(translated_file, epub_path, pdf_path, args.title, args.author,
-                                    build_epub_fn=build_epub, build_pdf_fn=build_pdf)
-                    print(f"[EPUB/PDF] Da dong goi {existing_count} chuong vao: {epub_path} va {pdf_path}")
-                except Exception as e:
-                    print(f"[EPUB/PDF] Loi khi dong goi ban cu: {e}")
+    # Khong tu dong dong goi EPUB/PDF tu ban dich cu khi bat dau: nguoi dung bam tai file
+    # tren giao dien (web_gui /export) khi can.
 
     # Kiem tra dung luong disk truoc khi bat dau
     _check_disk_space(args.raw)

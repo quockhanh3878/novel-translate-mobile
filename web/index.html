@@ -185,6 +185,10 @@
                         <strong>Tự động khôi phục (Resume) và đóng gói thông minh</strong>
                         <p>Nếu cào hoặc dịch bị dừng giữa chừng (mất mạng, tắt app...), chỉ cần nhập lại thông tin cũ và bấm chạy lại. Các chương đã xong được giữ nguyên, hệ thống tiếp tục từ chương dang dở và tự động bỏ qua bước đóng gói lại nếu file EPUB/PDF đã khớp bản dịch mới nhất.</p>
                     </div>
+                    <div class="help-block">
+                        <strong>Sửa chương bằng file có sẵn</strong>
+                        <p>Nếu có chương bị cào sai hoặc cần thay bằng bản đúng (file TXT theo định dạng file thô, hoặc trang HTML/MHTML đã lưu), bấm "Nạp file chương sửa". Chương có cùng số trong tiêu đề sẽ được thay; chương chưa có sẽ được thêm vào cuối rồi sắp lại. Chương đã thay được dịch lại, các chương khác giữ nguyên bản dịch. Bản cũ được lưu thành *.truoc-nap.bak.</p>
+                    </div>
                     <div class="help-block" id="help-termux" hidden>
                         <strong>Chạy và kiểm tra tiến trình trên Termux</strong>
                         <p>Khởi chạy giao diện web hoặc cập nhật trên Termux:</p>
@@ -195,13 +199,13 @@
                     </div>
                     <div class="help-block" id="help-termux-files" hidden>
                         <strong>Lấy file EPUB/PDF ra điện thoại (Termux)</strong>
-                        <p>Khi dịch xong, ứng dụng tự động chép EPUB/PDF ra thư mục <code class="inline">Documents</code> hoặc <code class="inline">Download</code> của điện thoại (nếu đã chạy <code class="inline">termux-setup-storage</code>). Bạn cũng có thể tải trực tiếp ở mục "Truyện đã dịch" bên dưới hoặc chép thủ công:</p>
+                        <p>Khi dịch xong, ứng dụng tự động chép EPUB/PDF ra thư mục <code class="inline">Documents</code> hoặc <code class="inline">Download</code> của điện thoại (nếu đã chạy <code class="inline">termux-setup-storage</code>). Bạn cũng có thể bấm "Tải EPUB" hoặc "Tải PDF" ở cuối trang, hoặc chép thủ công:</p>
                         <code>cp ~/novel/*.{epub,pdf} ~/storage/shared/Download/</code>
                     </div>
                     <div class="help-block" id="help-desktop" hidden>
                         <strong>Vị trí lưu file (máy tính)</strong>
                         <p>Truyện thô, bản dịch, EPUB và PDF nằm trong thư mục: <code class="inline" id="help-data-dir"></code></p>
-                        <p>Bấm "Mở thư mục dữ liệu" ở cuối trang để mở nhanh. EPUB và PDF đã dịch cũng hiện trong mục "Truyện đã dịch" bên dưới để tải về.</p>
+                        <p>Bấm "Mở thư mục dữ liệu" ở cuối trang để mở nhanh. EPUB và PDF được tạo khi bạn bấm "Tải EPUB" hoặc "Tải PDF" ở cuối trang.</p>
                     </div>
                 </div>
             </details>
@@ -210,6 +214,8 @@
                 <button type="submit" class="btn btn-start" id="btn-start">Bắt đầu dịch</button>
                 <button type="submit" class="btn-small" id="btn-crawl-only" data-mode="crawl_only">Chỉ cào chương</button>
                 <button type="button" class="btn-small" id="btn-heal" title="Bỏ chương trùng, sắp lại thứ tự, đối chiếu bản đã dịch để không dịch lại">Tự sửa chương</button>
+                <button type="button" class="btn-small" id="btn-fix-upload" title="Chọn file TXT hoặc HTML/MHTML chứa bản đúng của chương cần sửa">Nạp file chương sửa</button>
+                <input type="file" id="fix_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
                 <button type="button" class="btn btn-stop" id="btn-stop" hidden>Dừng lại</button>
             </div>
         </form>
@@ -255,13 +261,15 @@
         <pre id="log" aria-label="Nhật ký chạy"></pre>
         </section>
 
-        <section class="library" aria-labelledby="library-title">
+        <section class="library" aria-labelledby="export-title">
             <div class="library-head">
-                <h2 id="library-title">Truyện đã dịch</h2>
-                <button type="button" class="console-btn" id="btn-refresh-library">Làm mới</button>
+                <h2 id="export-title">Tải bản dịch</h2>
             </div>
-            <p class="hint library-hint">Tải EPUB để đọc bằng ứng dụng sách hoặc PDF để xem và in. File được tạo lại khi bản dịch hoặc metadata thay đổi.</p>
-            <ul class="library-list" id="library-list"></ul>
+            <p class="hint library-hint">Bấm để đóng gói EPUB (đọc bằng ứng dụng sách) hoặc PDF (xem và in) từ bản dịch hiện có, dùng tên và tác giả đang nhập ở trên. Nếu bản dịch chưa đổi thì tải lại file đã đóng gói, không làm lại.</p>
+            <div class="export-row">
+                <button type="button" class="btn-small accent" id="btn-export-epub">Tải EPUB</button>
+                <button type="button" class="btn-small accent" id="btn-export-pdf">Tải PDF</button>
+            </div>
         </section>
 
         <footer class="app-footer">

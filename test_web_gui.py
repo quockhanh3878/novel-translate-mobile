@@ -162,14 +162,11 @@ def demo():
         web_gui._worker_command = original
 
     # --- Server: file tinh, chong ../, thu vien, tai file ---
-    with open("Dệ Tam.epub", "wb") as f:
-        f.write(b"PK-fake-epub")
-    with open("Dệ Tam.pdf", "wb") as f:
-        f.write(b"%PDF-fake")
-    with open("test_dung_thu.epub", "wb") as f:
-        f.write(b"PK-test")
-    with open("bi_mat.txt", "w", encoding="utf-8") as f:
-        f.write("khong duoc tai")
+    # Ban dich de /export dong goi theo yeu cau (khong co file EPUB/PDF nao duoc tao san)
+    with open("truyen_xuat.txt", "w", encoding="utf-8") as f:
+        f.write("=== TRUYEN ===\n\n=== 第1章 ===\n\nDong mot.\n\n" + "=" * 40 + "\n\n")
+    with open("truyen_xuat.txt.viet.txt", "w", encoding="utf-8") as f:
+        f.write("=== Truyện ===\n\n=== Chương 1 ===\n\nDòng một.\n\n" + "=" * 40 + "\n\n")
 
     server = web_gui.make_server("127.0.0.1", 0)
     assert server.server_address[0] == "127.0.0.1"
@@ -217,21 +214,30 @@ def demo():
             "wa01.com",
         }, info
 
-        status, _, body = get(base, "/library")
-        names = [item["name"] for item in json.loads(body)["items"]]
-        assert set(names) == {"Dệ Tam.epub", "Dệ Tam.pdf"}, names  # khong liet ke file dich thu
+        # /library va /download da bo: khong liet ke san, file chi dong goi khi nguoi dung bam tai
+        assert get(base, "/library")[0] == 404
+        assert get(base, "/download?name=" + urllib.parse.quote("Dệ Tam.epub"))[0] == 404
 
-        quoted = urllib.parse.quote("Dệ Tam.epub")
-        status, headers, body = get(base, "/download?name=" + quoted)
-        assert status == 200 and body == b"PK-fake-epub"
+        # /export: dong goi EPUB va PDF tu ban dich co san, ten file lay theo tieu de
+        export_q = ("input=truyen_xuat.txt&title=" + urllib.parse.quote("Truyện Xuất")
+                    + "&author=" + urllib.parse.quote("Tác Giả"))
+        status, headers, body = get(base, "/export?format=epub&" + export_q)
+        assert status == 200 and body[:2] == b"PK", (status, body[:80])
         assert headers["Content-Type"] == "application/epub+zip"
-        assert "filename*=UTF-8''" + quoted in headers["Content-Disposition"]
-        quoted_pdf = urllib.parse.quote("Dệ Tam.pdf")
-        status, headers, body = get(base, "/download?name=" + quoted_pdf)
-        assert status == 200 and body == b"%PDF-fake"
-        assert headers["Content-Type"] == "application/pdf"
-        for bad in ("../web_gui.py", "..%5Cweb_gui.py", "bi_mat.txt", "test_dung_thu.epub", "test_dung_thu.pdf", ".env", ""):
-            assert get(base, "/download?name=" + bad)[0] == 404, bad
+        assert "filename*=UTF-8''" + urllib.parse.quote("Truyện Xuất.epub") in headers["Content-Disposition"], \
+            headers["Content-Disposition"]
+        epub_path = os.path.join(_work.name, "Truyện Xuất.epub")
+        assert os.path.isfile(epub_path)
+        mtime = os.path.getmtime(epub_path)
+        status, _, body = get(base, "/export?format=epub&" + export_q)  # ban dich khong doi: khong dong goi lai
+        assert status == 200 and body[:2] == b"PK" and os.path.getmtime(epub_path) == mtime
+
+        status, headers, body = get(base, "/export?format=pdf&" + export_q)
+        assert status == 200 and body[:4] == b"%PDF" and headers["Content-Type"] == "application/pdf"
+
+        for bad_query in ("format=docx&" + export_q, "format=epub&input=chua_dich.txt", "format=epub"):
+            status, _, body = get(base, "/export?" + bad_query)
+            assert status == 400 and json.loads(body)["ok"] is False, (bad_query, status, body)
 
         # Test safe upload qua /upload_raw
         upload_data = "Noi dung upload an toan".encode("utf-8")
@@ -273,27 +279,41 @@ def demo():
         except urllib.error.HTTPError as exc:
             assert exc.code == 400 and "xac minh" in exc.read().decode("utf-8")
 
-        # Test library va download voi output_dir tuy chon
+        # /export voi output_dir tuy chon: raw + ban dich nam trong thu muc do, file dong goi luu o do
         custom_out_dir = os.path.join(_work.name, "CustomOutput")
         os.makedirs(custom_out_dir, exist_ok=True)
-        custom_epub = os.path.join(custom_out_dir, "CustomTruyen.epub")
-        with open(custom_epub, "wb") as f:
-            f.write(b"PK-custom-epub")
-        custom_pdf = os.path.join(custom_out_dir, "CustomTruyen.pdf")
-        with open(custom_pdf, "wb") as f:
-            f.write(b"%PDF-custom")
+        with open(os.path.join(custom_out_dir, "truyen_xuat.txt"), "w", encoding="utf-8") as f:
+            f.write("=== TRUYEN ===\n\n=== 第1章 ===\n\nDong mot.\n\n" + "=" * 40 + "\n\n")
+        with open(os.path.join(custom_out_dir, "truyen_xuat.txt.viet.txt"), "w", encoding="utf-8") as f:
+            f.write("=== Truyện ===\n\n=== Chương 1 ===\n\nDòng một.\n\n" + "=" * 40 + "\n\n")
+        custom_raw = os.path.join(custom_out_dir, "truyen_xuat.txt")
+        status, headers, body = get(base, "/export?format=pdf&input=" + urllib.parse.quote(custom_raw)
+                                    + "&title=CustomTruyen&output_dir=" + urllib.parse.quote(custom_out_dir))
+        assert status == 200 and body[:4] == b"%PDF", (status, body[:80])
+        assert os.path.isfile(os.path.join(custom_out_dir, "CustomTruyen.pdf"))
 
-        # Goi /library co tham so output_dir
-        status, _, body = get(base, "/library?output_dir=" + urllib.parse.quote(custom_out_dir))
-        names = [item["name"] for item in json.loads(body)["items"]]
-        assert "CustomTruyen.epub" in names, names
-        assert "CustomTruyen.pdf" in names, names
-
-        # Tai file tu custom output_dir
-        status, headers, body = get(base, "/download?name=" + urllib.parse.quote("CustomTruyen.epub") + "&output_dir=" + urllib.parse.quote(custom_out_dir))
-        assert status == 200 and body == b"PK-custom-epub"
-        status, headers, body = get(base, "/download?name=" + urllib.parse.quote("CustomTruyen.pdf") + "&output_dir=" + urllib.parse.quote(custom_out_dir))
-        assert status == 200 and body == b"%PDF-custom" and headers["Content-Type"] == "application/pdf"
+        # /replace_chapters: chuong cung so trong file nap thay chuong cu, ban dich chuong do bi bo
+        with open("truyen_sua.txt", "w", encoding="utf-8") as f:
+            f.write("=== TRUYEN ===\n\n=== 第1章 ===\n\nBan cu.\n\n" + "=" * 40 + "\n\n")
+        with open("truyen_sua.txt.viet.txt", "w", encoding="utf-8") as f:
+            f.write("=== Truyện ===\n\n=== Chương 1 ===\n\nBản cũ.\n\n" + "=" * 40 + "\n\n")
+        fix_req = urllib.request.Request(
+            base + "/replace_chapters?name=sua.txt&input=" + urllib.parse.quote("truyen_sua.txt"),
+            method="POST", data="=== 第1章 ===\n\nBan sua dung.\n\n".encode("utf-8"))
+        with urllib.request.urlopen(fix_req, timeout=5) as resp:
+            fix_res = json.loads(resp.read().decode("utf-8"))
+        assert fix_res["ok"] and fix_res["replaced"] == 1 and fix_res["appended"] == 0, fix_res
+        with open("truyen_sua.txt", encoding="utf-8") as f:
+            assert "Ban sua dung." in f.read()
+        from crawler import parse_chapters
+        assert not [c for c in parse_chapters("truyen_sua.txt.viet.txt") if c["paragraphs"]]  # chuong 1 da bo ban dich
+        try:
+            urllib.request.urlopen(urllib.request.Request(
+                base + "/replace_chapters?name=sua.txt&input=" + urllib.parse.quote("chua_co.txt"),
+                method="POST", data=b"=== 1 ===\n\nx\n\n"), timeout=5)
+            raise AssertionError("Nap chuong khi chua co file tho phai bi tu choi")
+        except urllib.error.HTTPError as e:
+            assert e.code == 400 and "Chua co file tho" in json.loads(e.read().decode("utf-8"))["message"]
 
         # /shutdown va /open_data_dir chi co khi launcher gan SHUTDOWN_HOOK / tren Windows
         req = urllib.request.Request(base + "/shutdown", method="POST", data=b"")

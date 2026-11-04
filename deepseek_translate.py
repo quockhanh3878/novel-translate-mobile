@@ -1216,6 +1216,82 @@ def auto_fix_novel(raw_file: str, output_file: str, log=print) -> dict:
     return {"fixed": fixed, "total": total, "translated": done, "stashed": stashed, "todo": todo}
 
 
+def replace_chapters(raw_file: str, output_file: str, new_chapters: list[dict], log=print) -> dict:
+    """Nut "Nap file chuong sua": thay chuong trong file tho bang ban sua, khop theo so chuong
+    trong tieu de (khong co thi them vao cuoi). Chuong co noi dung doi bi bo ban dich cu de dich
+    lai; ban dich cua chuong khac duoc chuyen vao kho cho san theo ma noi dung nen khong goi API
+    lai. Sao luu 2 file thanh *.truoc-nap.bak truoc khi ghi, roi chay heal_novel de sap xep."""
+    if not os.path.exists(raw_file):
+        raise ValueError(f"Chua co file tho: {raw_file}. Hay cao hoac nhap file tho truoc.")
+    new_chapters = [ch for ch in new_chapters if ch.get("paragraphs")]
+    if not new_chapters:
+        raise ValueError("File nap khong co chuong nao co noi dung.")
+
+    raw = parse_chapters(raw_file)
+    raw_head = raw[:1] if is_novel_title_entry(raw, 0) else []
+    body = raw[len(raw_head):]
+    tr_all = parse_chapters(output_file) if os.path.exists(output_file) else []
+    tr_head = tr_all[:1] if is_novel_title_entry(tr_all, 0) else []
+    tr = tr_all[len(tr_head):]
+    if len(tr) > len(body) or not all(_paired(body[k], t) for k, t in enumerate(tr)):
+        raise ValueError("File dich khong khop tung chuong voi file tho - khong nap tu dong, kiem tra tay.")
+
+    old_body = list(body)
+    replaced, appended = set(), 0
+    for new in new_chapters:
+        num = source_chapter_number(new["title"])
+        pos = next((k for k, ch in enumerate(body)
+                    if (num and source_chapter_number(ch["title"]) == num) or ch["title"] == new["title"]),
+                   None)
+        if pos is None:
+            body.append(new)
+            appended += 1
+        elif _chapter_source_hash(body[pos]) != _chapter_source_hash(new):
+            body[pos] = new
+            replaced.add(pos)
+
+    if not replaced and not appended:
+        log("[Nap chuong] Noi dung cac chuong nap trung voi file hien co, khong thay doi gi.")
+        return {"replaced": 0, "appended": 0, "kept": len(tr),
+                "stashed": len(_load_stash(output_file)), "healed": False}
+
+    # Ban dich lien tuc truoc chuong doi dau tien giu nguyen; phan sau chuyen vao kho (chuong
+    # khong doi) hoac bo (chuong da doi, phai dich lai).
+    first_changed = min(replaced) if replaced else len(tr)
+    keep = tr[:first_changed]
+    stash = _load_stash(output_file)
+    for pos in replaced:
+        if pos < len(old_body):
+            stash.pop(_chapter_source_hash(old_body[pos]), None)
+    for j in range(first_changed, len(tr)):
+        if j in replaced:
+            continue
+        stash[_chapter_source_hash(body[j])] = {"title": tr[j]["title"], "paragraphs": tr[j]["paragraphs"]}
+
+    import shutil
+    for path in (raw_file, output_file):
+        if os.path.exists(path):
+            shutil.copyfile(path, path + ".truoc-nap.bak")
+    with open(raw_file + ".tmp", "w", encoding="utf-8") as f:
+        if raw_head:
+            f.write(f"=== {raw_head[0]['title']} ===\n\n")
+        for ch in body:
+            f.write(_entry_text(ch["title"], ch["paragraphs"]))
+    os.replace(raw_file + ".tmp", raw_file)
+    if tr_all:
+        with open(output_file + ".tmp", "w", encoding="utf-8") as f:
+            for t in tr_head + keep:
+                f.write(_entry_text(t["title"], t["paragraphs"]))
+        os.replace(output_file + ".tmp", output_file)
+    _save_stash(output_file, stash)
+    log(f"[Nap chuong] Thay {len(replaced)} chuong, them {appended} chuong moi. Giu {len(keep)} ban dich "
+        "lien tuc; cac chuong con lai da dich duoc giu trong kho (khong goi API lai). Ban cu: *.truoc-nap.bak")
+
+    healed = heal_novel(raw_file, output_file, log=log)
+    return {"replaced": len(replaced), "appended": appended, "kept": len(keep),
+            "stashed": len(_load_stash(output_file)), "healed": healed}
+
+
 def _translate_with_retry(chapter: dict, *args, log=print, **kwargs) -> dict:
     """Ban dich lech so doan / sot chu Han (ValueError) -> dich lai toi da QUALITY_RETRIES lan."""
     for attempt in range(QUALITY_RETRIES + 1):

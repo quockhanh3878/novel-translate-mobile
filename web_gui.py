@@ -21,15 +21,15 @@ from pathlib import Path
 
 import requests
 
-from build_epub import build_epub
+from build_epub import build_epub, ensure_one_packaged
 from build_pdf import build_pdf
 from cost_estimate import catalog_chapter_count, estimate_catalog, estimate_file, usd_from_usage
 from sources import find_adapter, parse_saved_chapter_html
-from crawler import guess_title
+from crawler import guess_title, parse_chapters
 from deepseek_translate import (load_dotenv, TRANSLATE_SYSTEM_PROMPT,
                                 call_deepseek, translate_chapter,
                                 DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, REASONING_EFFORTS,
-                                is_peak_hour)
+                                is_peak_hour, replace_chapters)
 from text_postprocess import postprocess
 from novel_metadata import run_metadata, preview_metadata
 from version import __version__
@@ -608,44 +608,47 @@ def _pick_directory_dialog() -> str:
         return ""
 
 
-def _library_items(extra_dir=None) -> list:
-    """Cac file EPUB/PDF da dong goi trong thu muc lam viec va thu muc dau ra."""
-    items = []
-    seen_names = set()
-    dirs_to_scan = [Path.cwd().resolve()]
-    for d in REGISTERED_OUTPUT_DIRS:
-        res_d = Path(d).resolve()
-        if res_d not in dirs_to_scan:
-            dirs_to_scan.append(res_d)
-    if extra_dir:
-        try:
-            p = Path(extra_dir).expanduser().resolve()
-            if p.is_dir() and p not in dirs_to_scan:
-                dirs_to_scan.append(p)
-        except Exception:
-            pass
+EXPORT_LOCK = threading.Lock()  # tranh 2 lan tai cung dong goi 1 file
 
-    for directory in dirs_to_scan:
-        try:
-            entries = list(os.scandir(str(directory)))
-        except OSError:
-            continue
-        for entry in entries:
-            suffix = Path(entry.name).suffix.lower()
-            if not entry.is_file() or suffix not in (".epub", ".pdf"):
-                continue
-            if entry.name in (TEST_EPUB_NAME, TEST_PDF_NAME):
-                continue
-            if entry.name in seen_names:
-                continue
-            seen_names.add(entry.name)
-            try:
-                st = entry.stat()
-            except OSError:
-                continue
-            items.append({"name": entry.name, "size": st.st_size, "mtime": int(st.st_mtime)})
-    items.sort(key=lambda item: item["mtime"], reverse=True)
-    return items
+
+def _export_package(input_val: str, title: str, author: str, output_dir: str, fmt: str) -> Path:
+    """Dong goi EPUB hoac PDF tu ban dich hien co, chi khi nguoi dung yeu cau (khong tu dong khi dich).
+    File duoc ghi vao thu muc dau ra nen lan sau khong dong goi lai neu ban dich chua doi."""
+    if fmt not in ("epub", "pdf"):
+        raise ValueError("Dinh dang chi ho tro epub hoac pdf.")
+    if not input_val:
+        raise ValueError("Chua co nguon truyen. Hay nhap link hoac file tho truoc.")
+    with LOCK:
+        if STATE["running"]:
+            raise RuntimeError("Dang chay, hay dung hoac doi xong roi tai file.")
+
+    paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
+    translated_file = paths["translated_path"]
+    translated_chapters = [c for c in parse_chapters(str(translated_file)) if c.get("paragraphs")] \
+        if translated_file.is_file() else []
+    if not translated_chapters:
+        raise ValueError("Chua co ban dich de dong goi. Hay dich it nhat mot chuong truoc.")
+
+    metadata = run_metadata(str(paths["raw_path"]), str(translated_file),
+                            input_val if paths["is_url"] else "", title, author, None)
+    display_title, display_author = metadata["display_title"], metadata["author"]
+    package_path = paths["output_dir"] / (sanitize_filename(display_title) + "." + fmt)
+    build_fn = build_epub if fmt == "epub" else build_pdf
+    with EXPORT_LOCK:
+        ensure_one_packaged(str(translated_file), str(package_path), display_title, display_author, build_fn)
+    REGISTERED_OUTPUT_DIRS.add(paths["output_dir"])
+    return package_path
+
+
+def _chapters_from_upload(saved_path: Path, name: str) -> list:
+    """Doc cac chuong tu file TXT (dinh dang === tieu de === nhu file tho) hoac 1 trang HTML/MHTML da luu."""
+    suffix = Path(name).suffix.lower()
+    if suffix in (".html", ".htm", ".mht", ".mhtml"):
+        return [parse_saved_chapter_html(saved_path.read_text(encoding="utf-8", errors="replace"),
+                                         source_name=name)]
+    if suffix != ".txt":
+        raise ValueError("Chi nhan file .txt, .html, .htm, .mht hoac .mhtml.")
+    return [ch for ch in parse_chapters(str(saved_path)) if ch.get("paragraphs")]
 
 
 def _request_stop() -> None:
@@ -723,6 +726,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
             lines = []
             from deepseek_translate import auto_fix_novel
             result = auto_fix_novel(raw_file, translated_file, log=lines.append)
+            with LOCK:
+                STATE["log"] = "\n".join(lines) + "\n"
+            self._json({"ok": True, **result})
+        except Exception as exc:
+            self._json({"ok": False, "message": str(exc)}, 400)
+        finally:
+            with LOCK:
+                STATE["running"] = False
+
+    def _replace_chapters_request(self):
+        """Nut "Nap file chuong sua": body la file (TXT/HTML) chua ban chuong dung, thay chuong cung so."""
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query, keep_blank_values=True)
+        name = sanitize_filename(os.path.basename(qs.get("name", [""])[0]) or "chuong_sua.txt")
+        input_val = qs.get("input", [""])[0].strip()
+        title = qs.get("title", [""])[0].strip()
+        output_dir = qs.get("output_dir", [""])[0].strip()
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 30 * 1024 * 1024:
+            return self._json({"ok": False, "message": "File nap phai co dung luong tu 1 byte den 30 MB."}, 400)
+        data = self.rfile.read(length)
+        with LOCK:
+            if STATE["running"]:
+                return self._json({"ok": False, "message": "Dang chay, hay dung truoc khi nap chuong."}, 409)
+            STATE["running"] = True  # giu cho khong ai bat dau chay cung luc
+        try:
+            if not input_val:
+                raise ValueError("Chua co nguon truyen. Hay nhap link hoac file tho truoc.")
+            ok, saved_path, err = safe_upload_file(UPLOAD_DIR, name, data)
+            if not ok or saved_path is None:
+                raise ValueError(err or "Khong luu duoc file nap.")
+            chapters = _chapters_from_upload(saved_path, name)
+            if not chapters:
+                raise ValueError("Khong tim thay chuong nao trong file nap.")
+            paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
+            lines = []
+            result = replace_chapters(str(paths["raw_path"]), str(paths["translated_path"]), chapters,
+                                      log=lines.append)
             with LOCK:
                 STATE["log"] = "\n".join(lines) + "\n"
             self._json({"ok": True, **result})
@@ -821,36 +864,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "wa01.com",
                 ],
             })
-        elif path == "/library":
-            output_dir_param = urllib.parse.parse_qs(parsed.query).get("output_dir", [""])[0].strip()
-            self._json({"items": _library_items(extra_dir=output_dir_param if output_dir_param else None)})
-        elif path == "/download":
-            name = urllib.parse.parse_qs(parsed.query).get("name", [""])[0]
-            output_dir_param = urllib.parse.parse_qs(parsed.query).get("output_dir", [""])[0].strip()
-            if output_dir_param:
-                ok, valid_out, _ = validate_output_dir(output_dir_param, create=False)
-                if ok and valid_out:
-                    REGISTERED_OUTPUT_DIRS.add(valid_out)
-
-            valid_name = (name and name == os.path.basename(name) and not name.startswith(".")
-                          and os.sep not in name and (not os.altsep or os.altsep not in name)
-                          and Path(name).suffix.lower() in (".epub", ".pdf")
-                          and name not in (TEST_EPUB_NAME, TEST_PDF_NAME))
-
-            target_path = None
-            if valid_name:
-                allowed_roots = [Path.cwd().resolve(), *[Path(d).resolve() for d in REGISTERED_OUTPUT_DIRS]]
-                for root_dir in allowed_roots:
-                    candidate = root_dir / name
-                    if candidate.is_file() and is_safe_path(candidate, allowed_roots):
-                        target_path = candidate
-                        break
-
-            if target_path:
-                content_type = "application/epub+zip" if target_path.suffix.lower() == ".epub" else "application/pdf"
-                self._send_file(str(target_path), content_type, download_name=name)
+        elif path == "/export":
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            fmt = query.get("format", [""])[0].strip().lower()
+            try:
+                package_path = _export_package(
+                    query.get("input", [""])[0].strip(),
+                    query.get("title", [""])[0].strip(),
+                    query.get("author", [""])[0].strip(),
+                    query.get("output_dir", [""])[0].strip(),
+                    fmt,
+                )
+            except RuntimeError as exc:
+                self._json({"ok": False, "message": str(exc)}, 409)
+            except ValueError as exc:
+                self._json({"ok": False, "message": str(exc)}, 400)
+            except Exception as exc:
+                self._json({"ok": False, "message": f"Loi dong goi {fmt.upper()}: {exc}",
+                            "detail": traceback.format_exc()}, 500)
             else:
-                self._json({"error": "Khong tim thay file EPUB/PDF"}, 404)
+                content_type = "application/epub+zip" if fmt == "epub" else "application/pdf"
+                self._send_file(str(package_path), content_type, download_name=package_path.name)
         elif path == "/download_test":
             if TEST_EPUB_PATH and os.path.exists(TEST_EPUB_PATH):
                 self._send_file(TEST_EPUB_PATH, "application/epub+zip", download_name=TEST_EPUB_NAME)
@@ -932,6 +966,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             selected = _pick_directory_dialog()
             self._json({"success": bool(selected), "path": selected or ""})
+            return
+
+        if self.path.startswith("/replace_chapters"):
+            self._replace_chapters_request()
             return
 
         if self.path == "/heal":
