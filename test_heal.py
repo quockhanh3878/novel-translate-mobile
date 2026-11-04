@@ -189,7 +189,36 @@ def test_replace_identical_chapter_is_noop():
     print("PASS nap chuong trung noi dung: khong ghi, khong sao luu")
 
 
+def test_resume_by_content_after_raw_shift():
+    """Raw bi chen thong bao o giua: chuong da dich khong bi dich lai du vi tri da doi."""
+    with tempfile.TemporaryDirectory() as d:
+        raw, out = os.path.join(d, "raw.txt"), os.path.join(d, "raw.txt.viet.txt")
+        write(raw, [raw_ch(1), raw_ch(2), raw_ch(3), raw_ch(4)])
+        write(out, [tr_ch(1), tr_ch(2), tr_ch(3), tr_ch(4)], head="Truyện", head_sep=True)  # file cu, chua co chi muc
+        write(raw, [raw_ch(1), ("今天晚更", ["稍後更新"]), raw_ch(2), raw_ch(3), raw_ch(4), raw_ch(5)])
+
+        calls, original = [], dt.translate_chapter
+        dt.translate_chapter = fake_api(calls)
+        try:
+            dt.translate_novel(raw, out, None, "k", style_detect=False, prepare=False,
+                               avoid_peak=False, log=lambda *_: None)
+            assert calls == ["今天晚更", "第5章"], calls  # chi thong bao moi va chuong 5 goi API
+            assert titles(out) == ["Truyện", "Chương 1: Ten 1", "Moi", "Chương 2: Ten 2", "Chương 3: Ten 3",
+                                   "Chương 4: Ten 4", "Chương 5: Moi"], titles(out)
+            assert parse_chapters(out)[3]["paragraphs"] == ["Viet 2a", "Viet 2b"]  # khong bi dich lai
+            assert len(dt._load_done(out)) == 6 and not os.path.exists(dt._stash_path(out))
+
+            calls.clear()  # chay lai: khong con gi de goi API
+            dt.translate_novel(raw, out, None, "k", style_detect=False, prepare=False,
+                               avoid_peak=False, log=lambda *_: None)
+            assert calls == [], calls
+        finally:
+            dt.translate_chapter = original
+    print("PASS nhan dien chuong da dich theo noi dung khi raw bi chen, khong dich lai")
+
+
 if __name__ == "__main__":
+    test_resume_by_content_after_raw_shift()
     test_auto_fix_report_and_package_dedupe()
     test_heal_duplicates_and_order_then_translate_only_missing()
     test_stream_uses_stash()
