@@ -128,7 +128,25 @@ def test_mismatched_translation_not_touched():
     print("PASS file dich lech file tho: khong tu sua, khong dong vao file")
 
 
+def test_auto_fix_report_and_package_dedupe():
+    from crawler import unique_chapters
+    from build_epub import package_due
+    with tempfile.TemporaryDirectory() as d:
+        raw, out = os.path.join(d, "raw.txt"), os.path.join(d, "raw.txt.viet.txt")
+        write(raw, [raw_ch(1), raw_ch(3), raw_ch(3), raw_ch(2), raw_ch(4)])
+        write(out, [tr_ch(1), tr_ch(3)], head="Truyện", head_sep=True)
+        r = dt.auto_fix_novel(raw, out, log=lambda *_: None)
+        assert r == {"fixed": True, "total": 4, "translated": 1, "stashed": 1, "todo": 2}, r
+        assert not dt.auto_fix_novel(raw, out, log=lambda *_: None)["fixed"]
+    chs = [{"title": "a", "paragraphs": ["x"]}, {"title": "a", "paragraphs": ["x"]},
+           {"title": "a", "paragraphs": ["y"]}]
+    assert len(unique_chapters(chs)) == 2
+    assert package_due(25) and not package_due(24)
+    print("PASS nut tu sua doi chieu + dong goi bo chuong trung + dong goi theo dot")
+
+
 if __name__ == "__main__":
+    test_auto_fix_report_and_package_dedupe()
     test_heal_duplicates_and_order_then_translate_only_missing()
     test_stream_uses_stash()
     test_translate_novel_heals_by_itself()

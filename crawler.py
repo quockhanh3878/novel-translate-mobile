@@ -67,6 +67,17 @@ def is_novel_title_entry(chapters: list[dict], index: int) -> bool:
     return index == 0 and bool(chapters) and not chapters[0].get("paragraphs")
 
 
+def unique_chapters(chapters: list[dict]) -> list[dict]:
+    """Bo chuong trung hoan toan (cung tieu de + noi dung), giu ban dau tien."""
+    seen, out = set(), []
+    for ch in chapters:
+        key = (ch["title"], tuple(ch["paragraphs"]))
+        if key not in seen:
+            seen.add(key)
+            out.append(ch)
+    return out
+
+
 def iter_chapters_from_file(input_file: str):
     """Yield cac chuong co noi dung theo thu tu nguon, kem chi so 1-based."""
     chapters = parse_chapters(input_file)

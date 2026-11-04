@@ -684,6 +684,21 @@
         poll();
     };
 
+    $('btn-heal').onclick = async () => {
+        const params = new URLSearchParams();
+        new FormData(form).forEach((value, key) => params.append(key, value));
+        try {
+            const r = await fetch('/heal', { method: 'POST', body: params });
+            const d = await r.json();
+            if (!d.ok) throw new Error(d.message || ('mã ' + r.status));
+            notify(d.fixed ? 'Đã sửa chương. Xem nhật ký.' : 'Không có chương trùng hay lệch.', 'info', 5000);
+        } catch (err) {
+            notify('Tự sửa chương lỗi: ' + err.message, 'error', 7000);
+        }
+        if (pollTimeout) clearTimeout(pollTimeout);
+        poll();
+    };
+
     btnStop.onclick = async () => {
         btnStop.disabled = true;
         try {
@@ -798,6 +813,7 @@
 
             btnStart.disabled = s.running;
             btnCrawlOnly.disabled = s.running;
+            $('btn-heal').disabled = s.running;
             btnStop.hidden = !s.running;
             if (s.running) btnStop.disabled = !!s.stop_requested;
 

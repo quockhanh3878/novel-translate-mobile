@@ -707,6 +707,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return urllib.parse.parse_qs(self.rfile.read(length).decode())
 
+    def _heal(self):
+        """Nut Tu sua chuong: bo chuong trung, sap lai thu tu, doi chieu ban da dich (khong goi API)."""
+        params = self._read_form()
+        input_val = params.get("input", [""])[0].strip()
+        title = params.get("title", [""])[0].strip()
+        output_dir = params.get("output_dir", [""])[0].strip()
+        with LOCK:
+            if STATE["running"]:
+                return self._json({"ok": False, "message": "Dang chay, hay dung truoc khi tu sua."}, 409)
+            STATE["running"] = True  # giu cho khong ai bat dau chay cung luc
+        try:
+            paths = resolve_pipeline_paths(input_val, title=title, output_dir=output_dir)
+            raw_file, translated_file = str(paths["raw_path"]), str(paths["translated_path"])
+            lines = []
+            from deepseek_translate import auto_fix_novel
+            result = auto_fix_novel(raw_file, translated_file, log=lines.append)
+            with LOCK:
+                STATE["log"] = "\n".join(lines) + "\n"
+            self._json({"ok": True, **result})
+        except Exception as exc:
+            self._json({"ok": False, "message": str(exc)}, 400)
+        finally:
+            with LOCK:
+                STATE["running"] = False
+
     def _estimate(self, query):
         input_value = query.get("input", [""])[0].strip()
         title = query.get("title", [""])[0].strip()
@@ -907,6 +932,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             selected = _pick_directory_dialog()
             self._json({"success": bool(selected), "path": selected or ""})
+            return
+
+        if self.path == "/heal":
+            self._heal()
             return
 
         if self.path == "/stop":

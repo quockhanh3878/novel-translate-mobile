@@ -24,7 +24,7 @@ from reportlab.pdfbase.pdfdoc import XMP
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
 
 from build_epub import _record_packaged_source, copy_to_downloads
-from crawler import is_novel_title_entry, parse_chapters
+from crawler import is_novel_title_entry, parse_chapters, unique_chapters
 from novel_metadata import export_metadata, describe_export
 
 
@@ -121,6 +121,7 @@ def build_pdf(input_file: str, output_file: str, title: str, author: str) -> str
         raise ValueError(f"Khong tim thay chuong nao trong {input_file}")
     if is_novel_title_entry(chapters, 0):
         chapters = chapters[1:]
+    chapters = unique_chapters(chapters)
     if not chapters:
         raise ValueError(f"Khong tim thay noi dung chuong nao trong {input_file}")
 

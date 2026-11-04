@@ -1185,6 +1185,24 @@ def heal_novel(raw_file: str, output_file: str, log=print) -> bool:
     return True
 
 
+def auto_fix_novel(raw_file: str, output_file: str, log=print) -> dict:
+    """Nut "Tu sua chuong": heal_novel (bo trung, sap thu tu, giu ban dich) roi doi chieu file
+    tho voi file dich + kho cho san de bao ro chuong nao se KHONG phai dich lai."""
+    if not os.path.exists(raw_file):
+        log(f"[Tu sua] Khong thay file tho: {raw_file}")
+        return {"fixed": False, "total": 0, "translated": 0, "stashed": 0, "todo": 0}
+    fixed = heal_novel(raw_file, output_file, log=log)
+    raw = parse_chapters(raw_file)
+    total = len(raw) - (1 if is_novel_title_entry(raw, 0) else 0)
+    done, stashed = _translated_count(output_file), len(_load_stash(output_file))
+    todo = max(0, total - done - stashed)
+    if not fixed:
+        log("[Tu sua] Khong co chuong trung hay lech thu tu.")
+    log(f"[Tu sua] Doi chieu: {total} chuong tho | {done} da dich (noi tiep) | {stashed} da dich cho san "
+        f"(se lay lai, khong goi API) | {todo} con phai dich.")
+    return {"fixed": fixed, "total": total, "translated": done, "stashed": stashed, "todo": todo}
+
+
 def _translate_with_retry(chapter: dict, *args, log=print, **kwargs) -> dict:
     """Ban dich lech so doan / sot chu Han (ValueError) -> dich lai toi da QUALITY_RETRIES lan."""
     for attempt in range(QUALITY_RETRIES + 1):

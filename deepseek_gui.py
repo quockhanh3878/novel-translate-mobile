@@ -26,7 +26,7 @@ from crawler import DEFAULT_START_URL, DEFAULT_OUTPUT, count_chapters, crawl_nov
 from path_resolver import resolve_pipeline_paths, sanitize_filename
 from deepseek_translate import (load_dotenv, load_glossary, save_glossary, translate_novel,
                                 glossary_path_for)
-from build_epub import build_epub, ensure_packaged
+from build_epub import build_epub, ensure_packaged, package_due
 from build_pdf import build_pdf
 from novel_metadata import run_metadata, prepare_profile
 
@@ -369,7 +369,7 @@ class AppGUI(tk.Tk):
             pdf_path = os.path.join(save_dir, f"{output_name}.pdf")
             def _on_chapter_gui(idx, total, translated):
                 self.on_chapter_progress(idx, total, translated)
-                if not translated:
+                if not translated or not package_due(idx):
                     return
                 try:
                     ensure_packaged(translated_file, epub_path, pdf_path, title, author,

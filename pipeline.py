@@ -44,7 +44,7 @@ def _handle_sigterm(signum, frame):
 signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
-from build_epub import build_epub, ensure_packaged, is_package_up_to_date
+from build_epub import build_epub, ensure_packaged, is_package_up_to_date, package_due
 from novel_metadata import run_metadata, prepare_profile
 from path_resolver import resolve_pipeline_paths, sanitize_filename
 from build_pdf import build_pdf
@@ -143,6 +143,10 @@ def main():
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
 
+    # Bo chuong trung / sap lai thu tu TRUOC khi dong goi ban cu va truoc khi cao tiep
+    # (neu sua sau thi ban vua dong goi la ban cu, phai dong goi lai).
+    heal_novel(args.raw, translated_file)
+
     # Neu da co ban dich cu (tu quy trinh truoc day), dong goi EPUB/PDF ngay luon
     # de nguoi dung co the doc trong khi cho dich tiep cac chuong moi (bo qua neu da co san file cap nhat).
     if not args.crawl_only and os.path.exists(translated_file) and os.path.getsize(translated_file) > 0:
@@ -168,13 +172,11 @@ def main():
     if raw_dir != trans_dir:
         _check_disk_space(translated_file)
 
-    # Bo chuong trung / sap lai thu tu truoc khi cao tiep (cao tiep doc chuong cuoi trong file).
-    heal_novel(args.raw, translated_file)
-
     if args.crawl_only:
         print("=== Buoc 1/1: Cao truyen (chi luu ban tho) ===")
         saved = crawl_novel(args.start_url, args.raw, should_stop=lambda: _stop_flag,
                             from_chapter=args.from_chapter)
+        heal_novel(args.raw, translated_file)  # cao xong: kiem tra chuong trung/lech ngay
         prepare_profile(args.raw, translated_file)
         print(f"Da cao va luu {saved} chuong vao: {args.raw}")
         return
@@ -262,7 +264,7 @@ def main():
 
         print("\n=== Buoc 2/4: Dich ngay theo tung chuong vua cao ===")
         def _on_chapter_stream(idx, title, translated):
-            if not translated:
+            if not translated or not package_due(idx):
                 return
             try:
                 ensure_packaged(translated_file, epub_path, pdf_path, args.title, args.author,
@@ -295,7 +297,7 @@ def main():
     if not args.stream:
         print("\n=== Buoc 2/4: Dich bang DeepSeek API ===")
         def _on_chapter_batch(idx, total, translated):
-            if not translated:
+            if not translated or not package_due(idx):
                 return
             try:
                 ensure_packaged(translated_file, epub_path, pdf_path, args.title, args.author,
@@ -309,6 +311,8 @@ def main():
                          should_stop=lambda: _stop_flag, on_chapter=_on_chapter_batch,
                          reasoning_effort=args.reasoning_effort, prepare=not args.no_prepare)
 
+    if args.stream:
+        heal_novel(args.raw, translated_file)  # stream cao + dich xen ke: kiem tra trung/lech sau cung
     prepare_profile(args.raw, translated_file)
     print("\n=== Buoc 3/4: Kiem tra chat luong (Validation) ===")
     warnings = validate_translation(args.raw, translated_file)

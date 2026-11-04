@@ -28,7 +28,7 @@ from html import escape
 from ebooklib import epub
 from PIL import Image, ImageDraw, ImageFont
 
-from crawler import is_novel_title_entry, parse_chapters
+from crawler import is_novel_title_entry, parse_chapters, unique_chapters
 from novel_metadata import export_metadata, describe_export, metadata_fingerprint
 
 EPUB_CSS = """
@@ -116,6 +116,7 @@ def build_epub(input_file: str, output_file: str, title: str, author: str) -> st
         raise ValueError(f"Khong tim thay chuong nao trong {input_file}")
     if is_novel_title_entry(chapters, 0):
         chapters = chapters[1:]
+    chapters = unique_chapters(chapters)  # file loi con chuong trung thi khong dua vao sach
 
     metadata = export_metadata(input_file, title, author)
     book = epub.EpubBook()
@@ -271,6 +272,17 @@ def is_package_up_to_date(translated_file: str, package_path: str,
             return False
         return _valid_package(package_path)
     except (OSError, ValueError, KeyError, zipfile.BadZipFile):
+        return False
+
+
+PACKAGE_EVERY = 25  # dong goi giua chung moi N chuong; buoc cuoi luon dong goi du
+
+
+def package_due(idx) -> bool:
+    """Dong goi lai EPUB+PDF sau MOI chuong la lam lai ca cuon N lan (cham, vo ich)."""
+    try:
+        return int(idx) % PACKAGE_EVERY == 0
+    except (TypeError, ValueError):
         return False
 
 
