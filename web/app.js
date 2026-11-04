@@ -53,18 +53,6 @@
         setTimeout(() => { btn.textContent = original; }, 1500);
     }
 
-    function formatSize(bytes) {
-        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-        return Math.max(1, Math.round(bytes / 1024)) + ' KB';
-    }
-
-    function formatTime(epochSeconds) {
-        const d = new Date(epochSeconds * 1000);
-        const pad = (n) => String(n).padStart(2, '0');
-        return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() +
-            ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-    }
-
     async function postForm(path, fields) {
         const params = new URLSearchParams();
         Object.keys(fields || {}).forEach((k) => params.append(k, fields[k]));
@@ -684,16 +672,59 @@
         poll();
     };
 
+    // Tham so nguon dung chung cho cac thao tac tren truyen (sua chuong, nap chuong, tai file).
+    function sourceParams() {
+        return new URLSearchParams({
+            input: form.elements.input.value.trim(),
+            title: form.elements.title.value.trim(),
+            author: form.elements.author.value.trim(),
+            output_dir: form.elements.output_dir.value.trim(),
+        });
+    }
+
+    function requireSource(actionLabel) {
+        if (form.elements.input.value.trim()) return true;
+        notify('Nhập nguồn truyện trước khi ' + actionLabel + '.', 'warn', 5000);
+        form.elements.input.focus();
+        return false;
+    }
+
     $('btn-heal').onclick = async () => {
-        const params = new URLSearchParams();
-        new FormData(form).forEach((value, key) => params.append(key, value));
+        if (!requireSource('sửa chương')) return;
         try {
-            const r = await fetch('/heal', { method: 'POST', body: params });
+            const r = await fetch('/heal', { method: 'POST', body: sourceParams() });
             const d = await r.json();
             if (!d.ok) throw new Error(d.message || ('mã ' + r.status));
             notify(d.fixed ? 'Đã sửa chương. Xem nhật ký.' : 'Không có chương trùng hay lệch.', 'info', 5000);
         } catch (err) {
             notify('Tự sửa chương lỗi: ' + err.message, 'error', 7000);
+        }
+        if (pollTimeout) clearTimeout(pollTimeout);
+        poll();
+    };
+
+    // Nap file chuong sua: moi file gui rieng, server thay chuong cung so trong file tho.
+    const fixFileInput = $('fix_file_input');
+    $('btn-fix-upload').onclick = () => {
+        if (requireSource('nạp file chương sửa')) fixFileInput.click();
+    };
+
+    fixFileInput.onchange = async () => {
+        const files = Array.from(fixFileInput.files || []);
+        fixFileInput.value = '';
+        for (const file of files) {
+            const params = sourceParams();
+            params.set('name', file.name);
+            try {
+                const r = await fetch('/replace_chapters?' + params.toString(), { method: 'POST', body: file });
+                const d = await r.json();
+                if (!d.ok) throw new Error(d.message || ('mã ' + r.status));
+                notify(file.name + ': thay ' + d.replaced + ' chương, thêm ' + d.appended + ' chương mới.' +
+                    (d.healed ? ' Đã sắp lại.' : ''), 'info', 6000);
+            } catch (err) {
+                notify('Nạp ' + file.name + ' lỗi: ' + err.message, 'error', 7000);
+                break;
+            }
         }
         if (pollTimeout) clearTimeout(pollTimeout);
         poll();
@@ -791,6 +822,13 @@
         }
     }
 
+    // Mot cho duy nhat quyet dinh nut nao bi khoa khi pipeline dang chay.
+    function setBusy(running) {
+        [btnStart, btnCrawlOnly, $('btn-heal'), $('btn-fix-upload'), $('btn-export-epub'), $('btn-export-pdf')]
+            .forEach((btn) => { btn.disabled = running; });
+        btnStop.hidden = !running;
+    }
+
     function renderResult(s) {
         if (s.crawl_only && s.step === 'done') {
             setResult('success', 'Da cao ' + s.crawled_chapters + ' chuong. File tho luu tai: ' + s.raw_file);
@@ -811,10 +849,7 @@
             const r = await fetch('/status');
             const s = await r.json();
 
-            btnStart.disabled = s.running;
-            btnCrawlOnly.disabled = s.running;
-            $('btn-heal').disabled = s.running;
-            btnStop.hidden = !s.running;
+            setBusy(s.running);
             if (s.running) btnStop.disabled = !!s.stop_requested;
 
             logEl.textContent = s.log;
@@ -839,7 +874,6 @@
             }
 
             if (wasRunning && !s.running) {
-                loadLibrary();
                 refreshVisibleBalance();
                 scheduleBookMetadata();
             }
@@ -852,64 +886,52 @@
         }
     }
 
-    // ---------- Thu vien EPUB ----------
+    // ---------- Tai ban dich (EPUB/PDF dong goi theo yeu cau) ----------
 
-    const libraryList = $('library-list');
-
-    function renderLibrary(items) {
-        libraryList.textContent = '';
-        if (!items.length) {
-            const empty = document.createElement('li');
-            empty.className = 'library-empty';
-            empty.textContent = 'Chưa có truyện nào được đóng gói. File EPUB/PDF sẽ hiện ở đây sau khi dịch.';
-            libraryList.appendChild(empty);
-            return;
+    function exportFileName(r, fallback) {
+        const cd = r.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+        if (m) {
+            try { return decodeURIComponent(m[1]); } catch (_) { /* roi xuong ten du phong */ }
         }
-        items.forEach((item) => {
-            const li = document.createElement('li');
-            li.className = 'library-item';
-
-            const info = document.createElement('div');
-            info.className = 'library-info';
-            const name = document.createElement('div');
-            name.className = 'library-name';
-            const isPdf = /\.pdf$/i.test(item.name);
-            name.textContent = item.name.replace(/\.(epub|pdf)$/i, '');
-            name.title = item.name;
-            const meta = document.createElement('div');
-            meta.className = 'library-meta';
-            meta.textContent = formatSize(item.size) + '  |  ' + formatTime(item.mtime);
-            info.appendChild(name);
-            info.appendChild(meta);
-
-            const link = document.createElement('a');
-            link.className = 'btn-small accent';
-            link.href = '/download?name=' + encodeURIComponent(item.name);
-            link.setAttribute('download', item.name);
-            link.textContent = isPdf ? 'Tải PDF' : 'Tải EPUB';
-
-            li.appendChild(info);
-            li.appendChild(link);
-            libraryList.appendChild(li);
-        });
+        return fallback;
     }
 
-    async function loadLibrary() {
+    async function exportPackage(fmt, btn) {
+        if (!requireSource('tải file')) return;
+        const params = sourceParams();
+        params.set('format', fmt);
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Đang đóng gói...';
         try {
-            const outDir = form && form.elements.output_dir ? form.elements.output_dir.value.trim() : '';
-            const r = await fetch('/library' + (outDir ? '?output_dir=' + encodeURIComponent(outDir) : ''));
-            const data = await r.json();
-            renderLibrary(data.items || []);
+            const r = await fetch('/export?' + params.toString());
+            if (!r.ok) {
+                let msg = 'mã ' + r.status;
+                try { msg = (await r.json()).message || msg; } catch (_) { /* giu ma loi */ }
+                throw new Error(msg);
+            }
+            const blob = await r.blob();
+            const name = exportFileName(r, 'truyen.' + fmt);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = name;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+            notify('Đã tải ' + name, 'info', 4000);
         } catch (err) {
-            libraryList.textContent = '';
-            const bad = document.createElement('li');
-            bad.className = 'library-empty';
-            bad.textContent = 'Không đọc được danh sách truyện: ' + err.message;
-            libraryList.appendChild(bad);
+            notify('Không tải được ' + fmt.toUpperCase() + ': ' + err.message, 'error', 7000);
+        } finally {
+            btn.textContent = label;
+            btn.disabled = false;
         }
     }
 
-    $('btn-refresh-library').onclick = loadLibrary;
+    $('btn-export-epub').onclick = (e) => exportPackage('epub', e.currentTarget);
+    $('btn-export-pdf').onclick = (e) => exportPackage('pdf', e.currentTarget);
 
     // ---------- Thong tin app, mo thu muc, thoat ----------
 
@@ -949,7 +971,6 @@
                             saveForm();
                             scheduleEstimate();
                             scheduleBookMetadata();
-                            loadLibrary();
                         }
                     } catch (err) {
                         notify('Không chọn được thư mục: ' + err.message, 'error');
@@ -1093,6 +1114,5 @@
     scheduleBookMetadata();
     checkKey();
     loadInfo();
-    loadLibrary();
     poll();
 })();

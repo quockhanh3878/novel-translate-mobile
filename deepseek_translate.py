@@ -1049,12 +1049,13 @@ def _translated_count(output_file: str) -> int:
 
 
 def _append_entry(output_file: str, position: int, written: int, title: str,
-                  paragraphs: list[str]) -> int:
+                  paragraphs: list[str], source_hash: str | None = None) -> int:
     """Ghi noi tiep chuong thu `position`; tu choi neu khong lien ke (tranh lech thu tu)."""
     if position != written + 1:
         raise RuntimeError(f"Chuong {position} khong noi tiep file dich (moi co {written} chuong)")
     with open(output_file, "a", encoding="utf-8") as f:
         f.write(_entry_text(title, paragraphs))
+    _record_done(output_file, written, source_hash)
     return position
 
 
@@ -1106,6 +1107,108 @@ def _paired(raw_ch: dict, tr_ch: dict) -> bool:
     # ponytail: ban dich cu co the lech 1-2 doan; lech nhieu = file dich khong khop file tho.
     a, b = len(raw_ch["paragraphs"]), len(tr_ch["paragraphs"])
     return abs(a - b) <= max(3, a // 10)
+
+
+# --- Chi muc chuong da dich: nhan dien chuong theo NOI DUNG, khong theo vi tri ---------------
+# <file dich>.index.json luu ma noi dung (hash) cua tung chuong da dich, theo dung thu tu trong
+# file dich. Nho do, khi file tho bi chen/doi thu tu thi chuong da dich van duoc nhan ra va
+# khong dich lai. File cu chua co chi muc: suy ra tu so "Chuong N" trong tieu de.
+
+_TR_NUM_RE = re.compile(r"^Chương (\d+)\b")
+
+
+def _done_path(output_file: str) -> str:
+    return output_file + ".index.json"
+
+
+def _load_done(output_file: str) -> list:
+    try:
+        with open(_done_path(output_file), encoding="utf-8") as f:
+            data = json.load(f)
+        hashes = data.get("done") if isinstance(data, dict) else None
+        return list(hashes) if isinstance(hashes, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _save_done(output_file: str, hashes: list) -> None:
+    path = _done_path(output_file)
+    if not hashes:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "done": hashes}, f, ensure_ascii=False)
+    os.replace(path + ".tmp", path)
+
+
+def _record_done(output_file: str, written: int, source_hash: str | None) -> None:
+    """Ghi ma noi dung cua chuong vua them vao vi tri `written` (0-based) cua file dich."""
+    hashes = _load_done(output_file)
+    hashes = hashes[:written] + [None] * max(0, written - len(hashes))
+    hashes.append(source_hash)
+    _save_done(output_file, hashes)
+
+
+def _bootstrap_done(body: list[dict], tr: list[dict]) -> list:
+    """File dich chua co chi muc: ghep moi chuong dich voi chuong tho co cung nhan 'Chương N'.
+    Muc khong co so (thong bao) hoac khong ghep duoc -> None (chua biet la chuong nao)."""
+    by_label: dict[int, int] = {}
+    for j, lab in enumerate(chapter_labels([ch["title"] for ch in body])):
+        if lab is not None:
+            by_label.setdefault(lab, j)
+    out = []
+    for t in tr:
+        m = _TR_NUM_RE.match(t["title"])
+        j = by_label.get(int(m.group(1))) if m else None
+        out.append(_chapter_source_hash(body[j]) if j is not None and _paired(body[j], t) else None)
+    return out
+
+
+def resume_point(body: list[dict], output_file: str, log=print) -> int:
+    """So chuong dich lien tuc, dung thu tu, tinh theo noi dung. Phan dich sau doan lech duoc dua
+    vao kho (theo ma noi dung) de khong goi API lai; file dich duoc cat lai o doan lech. Sao luu
+    truoc khi cat thanh *.truoc-doi-chi-muc.bak."""
+    if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
+        return 0
+    tr_all = parse_chapters(output_file)
+    tr_head = tr_all[:1] if is_novel_title_entry(tr_all, 0) else []
+    tr = tr_all[len(tr_head):]
+    done = _load_done(output_file)
+    if len(done) != len(tr):
+        done = _bootstrap_done(body, tr)
+
+    prefix = 0
+    while (prefix < len(tr) and prefix < len(body) and done[prefix] is not None
+           and done[prefix] == _chapter_source_hash(body[prefix])):
+        prefix += 1
+    if prefix == len(tr):
+        _save_done(output_file, done)
+        return prefix
+
+    stash = _load_stash(output_file)
+    moved = unknown = 0
+    for k in range(prefix, len(tr)):
+        if done[k] is None:
+            unknown += 1
+            continue
+        stash[done[k]] = {"title": tr[k]["title"], "paragraphs": tr[k]["paragraphs"]}
+        moved += 1
+    import shutil
+    shutil.copyfile(output_file, output_file + ".truoc-doi-chi-muc.bak")
+    with open(output_file + ".tmp", "w", encoding="utf-8") as f:
+        for t in tr_head + tr[:prefix]:
+            f.write(_entry_text(t["title"], t["paragraphs"]))
+    os.replace(output_file + ".tmp", output_file)
+    _save_done(output_file, done[:prefix])
+    _save_stash(output_file, stash)
+    msg = (f"[Chi muc] Nhan dien {prefix} chuong dich dung thu tu; {moved} chuong dich lech thu tu "
+           "duoc giu trong kho (khong goi API lai).")
+    if unknown:
+        msg += (f" {unknown} chuong khong nhan dien duoc da bi bo khoi file dich, ban cu: "
+                "*.truoc-doi-chi-muc.bak")
+    log(msg)
+    return prefix
 
 
 def heal_novel(raw_file: str, output_file: str, log=print) -> bool:
@@ -1191,6 +1294,7 @@ def heal_novel(raw_file: str, output_file: str, log=print) -> bool:
             for t in tr_head + prefix:
                 f.write(_entry_text(t["title"], t["paragraphs"]))
         os.replace(output_file + ".tmp", output_file)
+        _save_done(output_file, [_chapter_source_hash(fixed[i][0]) for i in range(len(prefix))])
     _save_stash(output_file, stash)
     log(f"[Tu sua] Bo {dups} chuong trung, sap lai {moved} chuong lech thu tu. File dich giu "
         f"{len(prefix)} chuong lien tuc, {len(stash)} chuong da dich cho san (khong dich lai). "
@@ -1214,6 +1318,83 @@ def auto_fix_novel(raw_file: str, output_file: str, log=print) -> dict:
     log(f"[Tu sua] Doi chieu: {total} chuong tho | {done} da dich (noi tiep) | {stashed} da dich cho san "
         f"(se lay lai, khong goi API) | {todo} con phai dich.")
     return {"fixed": fixed, "total": total, "translated": done, "stashed": stashed, "todo": todo}
+
+
+def replace_chapters(raw_file: str, output_file: str, new_chapters: list[dict], log=print) -> dict:
+    """Nut "Nap file chuong sua": thay chuong trong file tho bang ban sua, khop theo so chuong
+    trong tieu de (khong co thi them vao cuoi). Chuong co noi dung doi bi bo ban dich cu de dich
+    lai; ban dich cua chuong khac duoc chuyen vao kho cho san theo ma noi dung nen khong goi API
+    lai. Sao luu 2 file thanh *.truoc-nap.bak truoc khi ghi, roi chay heal_novel de sap xep."""
+    if not os.path.exists(raw_file):
+        raise ValueError(f"Chua co file tho: {raw_file}. Hay cao hoac nhap file tho truoc.")
+    new_chapters = [ch for ch in new_chapters if ch.get("paragraphs")]
+    if not new_chapters:
+        raise ValueError("File nap khong co chuong nao co noi dung.")
+
+    raw = parse_chapters(raw_file)
+    raw_head = raw[:1] if is_novel_title_entry(raw, 0) else []
+    body = raw[len(raw_head):]
+    tr_all = parse_chapters(output_file) if os.path.exists(output_file) else []
+    tr_head = tr_all[:1] if is_novel_title_entry(tr_all, 0) else []
+    tr = tr_all[len(tr_head):]
+    if len(tr) > len(body) or not all(_paired(body[k], t) for k, t in enumerate(tr)):
+        raise ValueError("File dich khong khop tung chuong voi file tho - khong nap tu dong, kiem tra tay.")
+
+    old_body = list(body)
+    replaced, appended = set(), 0
+    for new in new_chapters:
+        num = source_chapter_number(new["title"])
+        pos = next((k for k, ch in enumerate(body)
+                    if (num and source_chapter_number(ch["title"]) == num) or ch["title"] == new["title"]),
+                   None)
+        if pos is None:
+            body.append(new)
+            appended += 1
+        elif _chapter_source_hash(body[pos]) != _chapter_source_hash(new):
+            body[pos] = new
+            replaced.add(pos)
+
+    if not replaced and not appended:
+        log("[Nap chuong] Noi dung cac chuong nap trung voi file hien co, khong thay doi gi.")
+        return {"replaced": 0, "appended": 0, "kept": len(tr),
+                "stashed": len(_load_stash(output_file)), "healed": False}
+
+    # Ban dich lien tuc truoc chuong doi dau tien giu nguyen; phan sau chuyen vao kho (chuong
+    # khong doi) hoac bo (chuong da doi, phai dich lai).
+    first_changed = min(replaced) if replaced else len(tr)
+    keep = tr[:first_changed]
+    stash = _load_stash(output_file)
+    for pos in replaced:
+        if pos < len(old_body):
+            stash.pop(_chapter_source_hash(old_body[pos]), None)
+    for j in range(first_changed, len(tr)):
+        if j in replaced:
+            continue
+        stash[_chapter_source_hash(body[j])] = {"title": tr[j]["title"], "paragraphs": tr[j]["paragraphs"]}
+
+    import shutil
+    for path in (raw_file, output_file):
+        if os.path.exists(path):
+            shutil.copyfile(path, path + ".truoc-nap.bak")
+    with open(raw_file + ".tmp", "w", encoding="utf-8") as f:
+        if raw_head:
+            f.write(f"=== {raw_head[0]['title']} ===\n\n")
+        for ch in body:
+            f.write(_entry_text(ch["title"], ch["paragraphs"]))
+    os.replace(raw_file + ".tmp", raw_file)
+    if tr_all:
+        with open(output_file + ".tmp", "w", encoding="utf-8") as f:
+            for t in tr_head + keep:
+                f.write(_entry_text(t["title"], t["paragraphs"]))
+        os.replace(output_file + ".tmp", output_file)
+        _save_done(output_file, [_chapter_source_hash(body[k]) for k in range(len(keep))])
+    _save_stash(output_file, stash)
+    log(f"[Nap chuong] Thay {len(replaced)} chuong, them {appended} chuong moi. Giu {len(keep)} ban dich "
+        "lien tuc; cac chuong con lai da dich duoc giu trong kho (khong goi API lai). Ban cu: *.truoc-nap.bak")
+
+    healed = heal_novel(raw_file, output_file, log=log)
+    return {"replaced": len(replaced), "appended": appended, "kept": len(keep),
+            "stashed": len(_load_stash(output_file)), "healed": healed}
 
 
 def _translate_with_retry(chapter: dict, *args, log=print, **kwargs) -> dict:
@@ -1355,7 +1536,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
     labels = chapter_labels([ch["title"] for ch in body])
 
     # Vi tri (1-based, khong tinh muc tieu de) cua cac chuong chua dich.
-    written = _translated_count(output_file)
+    written = resume_point(body, output_file, log=log)
     pending = list(range(written + 1, len(body) + 1))
     failed_chapters: list[dict] = []
     log(f"Da dich {written} chuong truoc do, con lai {len(pending)} chuong.")
@@ -1506,7 +1687,7 @@ def translate_novel(input_file: str, output_file: str, glossary_path: str | None
                     translated.get("title", ""), labels[pos - 1], fallback_title=ch["title"]
                 )
                 written = _append_entry(output_file, pos, written, translated["title"],
-                                        translated["paragraphs"])
+                                        translated["paragraphs"], source_hash=_chapter_source_hash(ch))
                 # Ghi file chinh thanh cong -> xoa cache
                 _delete_cache(output_file, idx)
 
@@ -1660,7 +1841,8 @@ def translate_novel_stream(chapter_generator, output_file: str, glossary_path: s
                 translated.get("title", ""), label, fallback_title=chapter["title"]
             )
             written = _append_entry(output_file, source_index, written,
-                                    translated["title"], translated["paragraphs"])
+                                    translated["title"], translated["paragraphs"],
+                                    source_hash=_chapter_source_hash(chapter))
             # Ghi file chinh thanh cong -> xoa cache
             _delete_cache(output_file, source_index)
 

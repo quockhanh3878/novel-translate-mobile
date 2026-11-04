@@ -286,6 +286,16 @@ def package_due(idx) -> bool:
         return False
 
 
+def ensure_one_packaged(translated_file: str, package_path: str, title: str, author: str,
+                        build_fn) -> bool:
+    """Dong goi 1 dinh dang (EPUB hoac PDF) neu file chua co hoac da cu. Tra ve True neu da dung lai."""
+    if not package_path or is_package_up_to_date(translated_file, package_path, title, author):
+        return False
+    build_fn(translated_file, package_path, title, author)
+    _record_packaged_source(translated_file, package_path, title, author)
+    return True
+
+
 def ensure_packaged(
     translated_file: str,
     epub_path: str,
@@ -302,19 +312,8 @@ def ensure_packaged(
         from build_pdf import build_pdf as _default_build_pdf
         build_pdf_fn = _default_build_pdf
 
-    epub_built = False
-    pdf_built = False
-
-    if epub_path and not is_package_up_to_date(translated_file, epub_path, title, author):
-        build_epub_fn(translated_file, epub_path, title, author)
-        _record_packaged_source(translated_file, epub_path, title, author)
-        epub_built = True
-
-    if pdf_path and not is_package_up_to_date(translated_file, pdf_path, title, author):
-        build_pdf_fn(translated_file, pdf_path, title, author)
-        _record_packaged_source(translated_file, pdf_path, title, author)
-        pdf_built = True
-
+    epub_built = ensure_one_packaged(translated_file, epub_path, title, author, build_epub_fn)
+    pdf_built = ensure_one_packaged(translated_file, pdf_path, title, author, build_pdf_fn)
     return {"epub_built": epub_built, "pdf_built": pdf_built}
 
 

@@ -776,48 +776,12 @@ pre:empty::before {
 
 .library-head h2 { margin: 0; }
 
-.library-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+.export-row,
+.fix-actions {
+    margin-top: 12px;
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 8px;
-}
-
-.library-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-    background: var(--panel-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-}
-
-.library-info { flex: 1; min-width: 0; }
-
-.library-name {
-    font-weight: 600;
-    font-size: 14px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.library-meta {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 2px;
-}
-
-.library-empty {
-    font-size: 13px;
-    color: var(--text-muted);
-    padding: 14px;
-    border: 1px dashed rgba(255, 255, 255, 0.15);
-    border-radius: 10px;
-    text-align: center;
 }
 
 a.btn-small {
@@ -1012,8 +976,8 @@ a.btn-small {
         padding-bottom: max(20px, env(safe-area-inset-bottom));
     }
 
-    .library-item { flex-wrap: wrap; }
-    .library-item .btn-small { flex: 1 1 100%; min-height: 44px; }
+    .export-row .btn-small,
+    .fix-actions .btn-small { flex: 1 1 100%; min-height: 44px; }
 
     .app-footer { flex-direction: column; align-items: stretch; }
     .footer-actions .btn-small { flex: 1; min-height: 44px; }
