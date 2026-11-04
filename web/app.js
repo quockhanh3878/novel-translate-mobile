@@ -672,11 +672,27 @@
         poll();
     };
 
+    // Tham so nguon dung chung cho cac thao tac tren truyen (sua chuong, nap chuong, tai file).
+    function sourceParams() {
+        return new URLSearchParams({
+            input: form.elements.input.value.trim(),
+            title: form.elements.title.value.trim(),
+            author: form.elements.author.value.trim(),
+            output_dir: form.elements.output_dir.value.trim(),
+        });
+    }
+
+    function requireSource(actionLabel) {
+        if (form.elements.input.value.trim()) return true;
+        notify('Nhập nguồn truyện trước khi ' + actionLabel + '.', 'warn', 5000);
+        form.elements.input.focus();
+        return false;
+    }
+
     $('btn-heal').onclick = async () => {
-        const params = new URLSearchParams();
-        new FormData(form).forEach((value, key) => params.append(key, value));
+        if (!requireSource('sửa chương')) return;
         try {
-            const r = await fetch('/heal', { method: 'POST', body: params });
+            const r = await fetch('/heal', { method: 'POST', body: sourceParams() });
             const d = await r.json();
             if (!d.ok) throw new Error(d.message || ('mã ' + r.status));
             notify(d.fixed ? 'Đã sửa chương. Xem nhật ký.' : 'Không có chương trùng hay lệch.', 'info', 5000);
@@ -690,23 +706,15 @@
     // Nap file chuong sua: moi file gui rieng, server thay chuong cung so trong file tho.
     const fixFileInput = $('fix_file_input');
     $('btn-fix-upload').onclick = () => {
-        if (!form.elements.input.value.trim()) {
-            notify('Nhập nguồn truyện trước khi nạp file chương sửa.', 'warn', 5000);
-            return;
-        }
-        fixFileInput.click();
+        if (requireSource('nạp file chương sửa')) fixFileInput.click();
     };
 
     fixFileInput.onchange = async () => {
         const files = Array.from(fixFileInput.files || []);
         fixFileInput.value = '';
         for (const file of files) {
-            const params = new URLSearchParams({
-                name: file.name,
-                input: form.elements.input.value.trim(),
-                title: form.elements.title.value.trim(),
-                output_dir: form.elements.output_dir.value.trim(),
-            });
+            const params = sourceParams();
+            params.set('name', file.name);
             try {
                 const r = await fetch('/replace_chapters?' + params.toString(), { method: 'POST', body: file });
                 const d = await r.json();
@@ -814,6 +822,13 @@
         }
     }
 
+    // Mot cho duy nhat quyet dinh nut nao bi khoa khi pipeline dang chay.
+    function setBusy(running) {
+        [btnStart, btnCrawlOnly, $('btn-heal'), $('btn-fix-upload'), $('btn-export-epub'), $('btn-export-pdf')]
+            .forEach((btn) => { btn.disabled = running; });
+        btnStop.hidden = !running;
+    }
+
     function renderResult(s) {
         if (s.crawl_only && s.step === 'done') {
             setResult('success', 'Da cao ' + s.crawled_chapters + ' chuong. File tho luu tai: ' + s.raw_file);
@@ -834,13 +849,7 @@
             const r = await fetch('/status');
             const s = await r.json();
 
-            btnStart.disabled = s.running;
-            btnCrawlOnly.disabled = s.running;
-            $('btn-heal').disabled = s.running;
-            $('btn-fix-upload').disabled = s.running;
-            $('btn-export-epub').disabled = s.running;
-            $('btn-export-pdf').disabled = s.running;
-            btnStop.hidden = !s.running;
+            setBusy(s.running);
             if (s.running) btnStop.disabled = !!s.stop_requested;
 
             logEl.textContent = s.log;
@@ -889,18 +898,9 @@
     }
 
     async function exportPackage(fmt, btn) {
-        const input = form.elements.input.value.trim();
-        if (!input) {
-            notify('Nhập nguồn truyện trước khi tải file.', 'warn', 5000);
-            return;
-        }
-        const params = new URLSearchParams({
-            format: fmt,
-            input: input,
-            title: form.elements.title.value.trim(),
-            author: form.elements.author.value.trim(),
-            output_dir: form.elements.output_dir.value.trim(),
-        });
+        if (!requireSource('tải file')) return;
+        const params = sourceParams();
+        params.set('format', fmt);
         const label = btn.textContent;
         btn.disabled = true;
         btn.textContent = 'Đang đóng gói...';

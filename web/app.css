@@ -776,7 +776,9 @@ pre:empty::before {
 
 .library-head h2 { margin: 0; }
 
-.export-row {
+.export-row,
+.fix-actions {
+    margin-top: 12px;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -974,7 +976,8 @@ a.btn-small {
         padding-bottom: max(20px, env(safe-area-inset-bottom));
     }
 
-    .export-row .btn-small { flex: 1 1 100%; min-height: 44px; }
+    .export-row .btn-small,
+    .fix-actions .btn-small { flex: 1 1 100%; min-height: 44px; }
 
     .app-footer { flex-direction: column; align-items: stretch; }
     .footer-actions .btn-small { flex: 1; min-height: 44px; }

@@ -178,6 +178,16 @@
                 </div>
             </details>
 
+            <section class="form-section" aria-labelledby="fix-section-title">
+                <div class="section-heading"><h2 id="fix-section-title"><span class="section-number">04</span> Sửa chương đã cào</h2></div>
+                <p class="hint">Dùng khi file thô có chương trùng, lệch thứ tự hoặc cào sai. Hai nút này không gọi API, chỉ sửa file thô và bản dịch hiện có.</p>
+                <div class="fix-actions">
+                    <button type="button" class="btn-small" id="btn-heal" title="Bỏ chương trùng, sắp lại thứ tự, đối chiếu bản đã dịch để không dịch lại">Tự sửa chương</button>
+                    <button type="button" class="btn-small" id="btn-fix-upload" title="Chọn file TXT hoặc HTML/MHTML chứa bản đúng của chương cần sửa">Nạp file chương sửa</button>
+                    <input type="file" id="fix_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
+                </div>
+            </section>
+
             <details>
                 <summary>Hướng dẫn và khắc phục sự cố</summary>
                 <div class="details-body help" id="help-body">
@@ -213,9 +223,6 @@
             <div class="btn-group">
                 <button type="submit" class="btn btn-start" id="btn-start">Bắt đầu dịch</button>
                 <button type="submit" class="btn-small" id="btn-crawl-only" data-mode="crawl_only">Chỉ cào chương</button>
-                <button type="button" class="btn-small" id="btn-heal" title="Bỏ chương trùng, sắp lại thứ tự, đối chiếu bản đã dịch để không dịch lại">Tự sửa chương</button>
-                <button type="button" class="btn-small" id="btn-fix-upload" title="Chọn file TXT hoặc HTML/MHTML chứa bản đúng của chương cần sửa">Nạp file chương sửa</button>
-                <input type="file" id="fix_file_input" accept=".txt,.html,.htm,.mht,.mhtml,text/plain,text/html,multipart/related" multiple hidden>
                 <button type="button" class="btn btn-stop" id="btn-stop" hidden>Dừng lại</button>
             </div>
         </form>
