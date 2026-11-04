@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+import difflib
 import hashlib
 import json
 import os
@@ -1126,8 +1127,19 @@ def heal_novel(raw_file: str, output_file: str, log=print) -> bool:
 
     items = [(ch, tr[k] if k < len(tr) else None) for k, ch in enumerate(body)]
     fixed, seen, dups = [], {}, 0
+    by_title: dict[str, list[int]] = {}
     for ch, t in items:
         key = _chapter_source_hash(ch)
+        if key not in seen and source_chapter_number(ch["title"]):
+            # Cung tieu de co so chuong + noi dung gan nhu y het (cao lai lech 1 dong quang cao...)
+            # van la ban trung. ponytail: chi so tieu de trung nhau, nen it cap phai so.
+            text = "\n".join(ch["paragraphs"])
+            for j in by_title.get(ch["title"], []):
+                old = fixed[j][0]["paragraphs"]
+                if abs(len(old) - len(ch["paragraphs"])) <= 3 and difflib.SequenceMatcher(
+                        None, "\n".join(old), text, autojunk=False).quick_ratio() >= 0.97:
+                    key = _chapter_source_hash(fixed[j][0])
+                    break
         if key in seen:
             dups += 1
             j = seen[key]
@@ -1135,6 +1147,7 @@ def heal_novel(raw_file: str, output_file: str, log=print) -> bool:
                 fixed[j] = (fixed[j][0], t)
             continue
         seen[key] = len(fixed)
+        by_title.setdefault(ch["title"], []).append(len(fixed))
         fixed.append((ch, t))
 
     nums = [source_chapter_number(ch["title"]) for ch, _ in fixed]
